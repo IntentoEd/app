@@ -112,7 +112,7 @@ export default function PainelDoAluno() {
   const [caderno, setCaderno] = useState([]);
   const [cadernoCarregando, setCadernoCarregando] = useState(false);
   const [modalCadernoAberto, setModalCadernoAberto] = useState(false);
-  const [cardVirado, setCardVirado] = useState({});
+  const [respostaRevelada, setRespostaRevelada] = useState({});
   const [filtroCaderno, setFiltroCaderno] = useState('Todas');
   const [filtroStatusCaderno, setFiltroStatusCaderno] = useState('todos');
   const [formCaderno, setFormCaderno] = useState({ disciplina: '', topico: '', data: new Date().toISOString().split('T')[0], fonte: '', classificacao: '', pergunta: '', resposta: '' });
@@ -553,7 +553,7 @@ export default function PainelDoAluno() {
       setCaderno(prev => [novoCard, ...prev]);
       setModalCadernoAberto(false);
       setFormCaderno({ disciplina: '', topico: '', data: new Date().toISOString().split('T')[0], fonte: '', classificacao: '', pergunta: '', resposta: '' });
-      mostrarToast('Card adicionado!');
+      mostrarToast('Erro registrado no caderno!');
     } catch { mostrarToast('Erro ao salvar.', 'error'); }
     finally { setSalvandoCaderno(false); }
   };
@@ -573,7 +573,7 @@ export default function PainelDoAluno() {
       proxima.setDate(proxima.getDate() + diasAte);
       return { ...c, estagio: novoEstagio, proxima_revisao: proxima.toISOString().split('T')[0] };
     }));
-    setCardVirado(v => ({ ...v, [id]: false }));
+    setRespostaRevelada(v => ({ ...v, [id]: false }));
     if (idPlanilha) {
       try {
         const res = await apiFetch('/api/mentor', {
@@ -1738,7 +1738,7 @@ export default function PainelDoAluno() {
                           <button key={d} onClick={() => setFiltroCaderno(d)} className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${filtroCaderno === d ? 'bg-intento-blue text-white' : 'bg-white border border-slate-200 text-slate-500 hover:border-intento-blue'}`}>{d}</button>
                         ))}
                       </div>
-                      <button onClick={() => { setModalCadernoAberto(true); if (filtroCaderno !== 'Todas') setFormCaderno(f => ({ ...f, disciplina: filtroCaderno })); }} className="bg-intento-yellow hover:bg-yellow-500 text-white font-bold py-2 px-4 rounded-lg text-sm shadow-sm transition-all shrink-0">+ Novo Card</button>
+                      <button onClick={() => { setModalCadernoAberto(true); if (filtroCaderno !== 'Todas') setFormCaderno(f => ({ ...f, disciplina: filtroCaderno })); }} className="bg-intento-yellow hover:bg-yellow-500 text-white font-bold py-2 px-4 rounded-lg text-sm shadow-sm transition-all shrink-0">+ Anotar erro</button>
                     </div>
                   </div>
 
@@ -1765,15 +1765,15 @@ export default function PainelDoAluno() {
                     <div className="bg-white border border-slate-200 rounded-xl p-10 text-center">
                       <p className="text-slate-400 font-medium">
                         {cardsDaDisciplina.length === 0
-                          ? `Nenhum card ${filtroCaderno !== 'Todas' ? `em ${filtroCaderno}` : 'criado'} ainda.`
-                          : 'Nenhum card neste status.'}
+                          ? `Nenhum erro ${filtroCaderno !== 'Todas' ? `em ${filtroCaderno}` : 'anotado'} ainda.`
+                          : 'Nenhuma entrada neste status.'}
                       </p>
                       {cardsDaDisciplina.length === 0 && (
-                        <button onClick={() => setModalCadernoAberto(true)} className="mt-4 text-sm text-intento-blue font-semibold underline underline-offset-2 hover:text-intento-yellow transition">Criar primeiro card →</button>
+                        <button onClick={() => setModalCadernoAberto(true)} className="mt-4 text-sm text-intento-blue font-semibold underline underline-offset-2 hover:text-intento-yellow transition">Anotar primeiro erro →</button>
                       )}
                     </div>
                   ) : (
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    <div className="bg-white border border-slate-200 rounded-xl divide-y divide-slate-100 overflow-hidden">
                       {cardsExibidos.sort((a, b) => {
                         const ordem = { atrasado: 0, hoje: 1, novo: 2, 'em-dia': 3 };
                         const sa = statusCard(a);
@@ -1783,58 +1783,59 @@ export default function PainelDoAluno() {
                       }).map(card => {
                         const status = statusCard(card);
                         const estilo = STATUS_STYLES[status.tipo];
+                        const revelada = !!respostaRevelada[card.id];
                         return (
-                        <div key={card.id} className={`bg-white border border-slate-200 ${estilo.borda} rounded-xl shadow-sm overflow-hidden flex flex-col hover:border-intento-blue/30 transition-all`}>
-                          <div className="px-5 pt-5 pb-4 flex-1">
-                            <div className="flex items-start justify-between mb-3 gap-2">
-                              <div className="min-w-0">
-                                <span className="text-[10px] font-bold uppercase tracking-wider text-intento-yellow">{card.disciplina}</span>
-                                <p className="text-xs text-slate-400 mt-0.5">{card.topico}</p>
-                              </div>
-                              <span className={`text-[10px] font-bold uppercase tracking-wider border rounded-full px-2 py-0.5 shrink-0 ${estilo.badge}`}>
-                                {status.label}
-                              </span>
+                        <div key={card.id} className={`${estilo.borda} px-5 py-4 hover:bg-slate-50/50 transition-colors`}>
+                          <div className="flex items-start justify-between gap-3 mb-2">
+                            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] font-semibold uppercase tracking-wider min-w-0">
+                              <span className="text-intento-yellow">{card.disciplina}</span>
+                              {card.topico && <span className="text-slate-300">·</span>}
+                              {card.topico && <span className="text-slate-500 normal-case tracking-normal">{card.topico}</span>}
+                              {card.classificacao && (
+                                <span className={`border rounded-full px-2 py-0.5 ${CLASSIFICACAO_ESTILO[card.classificacao] || 'bg-slate-50 text-slate-600 border-slate-200'}`}>
+                                  {card.classificacao}
+                                </span>
+                              )}
+                              {card.fonte && (
+                                <span className="text-slate-500 bg-slate-100 border border-slate-200 rounded-full px-2 py-0.5 normal-case tracking-normal">
+                                  {card.fonte}
+                                </span>
+                              )}
                             </div>
-                            {(card.fonte || card.classificacao) && (
-                              <div className="flex flex-wrap gap-1.5 mb-3">
-                                {card.fonte && (
-                                  <span className="text-[10px] font-semibold text-slate-500 bg-slate-100 border border-slate-200 rounded-full px-2 py-0.5">
-                                    {card.fonte}
-                                  </span>
-                                )}
-                                {card.classificacao && (
-                                  <span className={`text-[10px] font-semibold border rounded-full px-2 py-0.5 ${CLASSIFICACAO_ESTILO[card.classificacao] || 'bg-slate-50 text-slate-600 border-slate-200'}`}>
-                                    {card.classificacao}
-                                  </span>
-                                )}
-                              </div>
-                            )}
-                            <p className="text-sm font-medium text-intento-blue leading-relaxed mb-4">{card.pergunta}</p>
-                            {cardVirado[card.id] ? (
-                              <div className="space-y-3">
-                                <div className="bg-slate-50 border border-slate-200 rounded-lg p-3">
-                                  <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">Resposta</p>
-                                  <p className="text-sm text-slate-700 leading-relaxed">{card.resposta}</p>
-                                </div>
-                                <div className="flex gap-2">
-                                  <button onClick={() => registrarRevisao(card.id, true)} className="flex-1 py-2 rounded-lg text-xs font-bold bg-emerald-500 hover:bg-emerald-600 text-white transition-all">✓ Acertei</button>
-                                  <button onClick={() => registrarRevisao(card.id, false)} className="flex-1 py-2 rounded-lg text-xs font-bold bg-red-400 hover:bg-red-500 text-white transition-all">✗ Errei</button>
-                                </div>
+                            <span className={`text-[10px] font-bold uppercase tracking-wider border rounded-full px-2 py-0.5 shrink-0 ${estilo.badge}`}>
+                              {status.label}
+                            </span>
+                          </div>
+
+                          <p className="text-sm font-medium text-intento-blue leading-relaxed mb-3">{card.pergunta}</p>
+
+                          {revelada && (
+                            <div className="bg-amber-50/60 border-l-2 border-intento-yellow pl-4 py-2 mb-3">
+                              <p className="text-[10px] font-bold uppercase tracking-wider text-amber-700 mb-1">Resposta</p>
+                              <p className="text-sm text-slate-700 leading-relaxed">{card.resposta}</p>
+                            </div>
+                          )}
+
+                          <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
+                            {revelada ? (
+                              <div className="flex gap-2">
+                                <button onClick={() => registrarRevisao(card.id, true)} className="px-3 py-1.5 rounded-lg text-xs font-bold bg-emerald-500 hover:bg-emerald-600 text-white transition-all">Lembrei</button>
+                                <button onClick={() => registrarRevisao(card.id, false)} className="px-3 py-1.5 rounded-lg text-xs font-bold bg-red-400 hover:bg-red-500 text-white transition-all">Não lembrei</button>
                               </div>
                             ) : (
-                              <button onClick={() => setCardVirado(v => ({ ...v, [card.id]: true }))} className="w-full text-center text-xs font-semibold text-slate-400 hover:text-intento-blue border border-dashed border-slate-200 rounded-lg py-2.5 transition-all hover:border-intento-blue">
-                                Ver resposta →
+                              <button onClick={() => setRespostaRevelada(v => ({ ...v, [card.id]: true }))} className="text-xs font-semibold text-slate-500 hover:text-intento-blue underline underline-offset-2 transition-colors">
+                                Revelar resposta →
                               </button>
                             )}
-                          </div>
-                          <div className="px-5 py-3 border-t border-slate-100 flex items-center justify-between">
-                            <span className="flex items-center gap-1.5 text-xs font-semibold text-slate-400">
-                              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
-                              Nível {card.estagio ?? 0}{card.proxima_revisao ? ` · ${card.proxima_revisao}` : ''}
-                            </span>
-                            <button onClick={() => deletarCardCaderno(card.id)} className="text-xs text-slate-300 hover:text-red-400 transition-colors">
-                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
-                            </button>
+                            <div className="flex items-center gap-3 text-xs text-slate-400">
+                              <span className="flex items-center gap-1.5">
+                                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                                Nível {card.estagio ?? 0}{card.proxima_revisao ? ` · ${card.proxima_revisao}` : ''}
+                              </span>
+                              <button onClick={() => deletarCardCaderno(card.id)} className="text-slate-300 hover:text-red-400 transition-colors" aria-label="Apagar entrada">
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                              </button>
+                            </div>
                           </div>
                         </div>
                         );
@@ -1909,7 +1910,7 @@ export default function PainelDoAluno() {
         <div role="dialog" aria-modal="true" className="fixed inset-0 z-50 flex items-center justify-center bg-intento-blue/60 backdrop-blur-sm p-4 animate-in fade-in">
           <div className="bg-white w-full max-w-lg rounded-xl shadow-lg flex flex-col overflow-hidden">
             <div className="px-7 py-5 border-b border-slate-100 flex justify-between items-center">
-              <h2 className="text-base font-semibold text-intento-blue">Novo Card — Caderno de Erros</h2>
+              <h2 className="text-base font-semibold text-intento-blue">Anotar erro — Caderno de Erros</h2>
               <button onClick={() => setModalCadernoAberto(false)} aria-label="Fechar modal" className="text-slate-300 hover:text-slate-500 transition-colors"><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"/></svg></button>
             </div>
             <div className="p-7 space-y-4">
@@ -1958,7 +1959,7 @@ export default function PainelDoAluno() {
             </div>
             <div className="px-7 py-5 border-t border-slate-100 flex justify-end gap-3">
               <button onClick={() => setModalCadernoAberto(false)} className={btnGhost}>Cancelar</button>
-              <button onClick={salvarCardCaderno} disabled={salvandoCaderno} className={btnPrimary + ' disabled:opacity-60'}>{salvandoCaderno ? 'Salvando...' : 'Salvar Card'}</button>
+              <button onClick={salvarCardCaderno} disabled={salvandoCaderno} className={btnPrimary + ' disabled:opacity-60'}>{salvandoCaderno ? 'Salvando...' : 'Anotar erro'}</button>
             </div>
           </div>
         </div>
