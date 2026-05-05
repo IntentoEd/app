@@ -115,7 +115,7 @@ export default function PainelDoAluno() {
   const [cardVirado, setCardVirado] = useState({});
   const [filtroCaderno, setFiltroCaderno] = useState('Todas');
   const [filtroStatusCaderno, setFiltroStatusCaderno] = useState('todos');
-  const [formCaderno, setFormCaderno] = useState({ disciplina: '', topico: '', data: new Date().toISOString().split('T')[0], pergunta: '', resposta: '' });
+  const [formCaderno, setFormCaderno] = useState({ disciplina: '', topico: '', data: new Date().toISOString().split('T')[0], fonte: '', classificacao: '', pergunta: '', resposta: '' });
 
   // ESTADOS DO SIMULADO 
   const [modalRegistroAberto, setModalRegistroAberto] = useState(false);
@@ -501,6 +501,19 @@ export default function PainelDoAluno() {
   // ── Caderno de Erros ─────────────────────────────────────────────────────────
   const disciplinasCaderno = ['Biologia', 'Química', 'Física', 'Matemática', 'Linguagens', 'Humanas', 'Redação'];
 
+  // Classificação segue o método: erros de conteúdo (faltou estudo) vs erros
+  // de prova (sabia mas errou na execução).
+  const CLASSIFICACOES_CADERNO = {
+    'Erros de conteúdo': ['Erro de recordação', 'Erro de lacuna'],
+    'Erros de prova':    ['Erro de atenção',   'Erro de interpretação'],
+  };
+  const CLASSIFICACAO_ESTILO = {
+    'Erro de recordação':   'bg-blue-50 text-blue-700 border-blue-200',
+    'Erro de lacuna':       'bg-blue-50 text-blue-700 border-blue-200',
+    'Erro de atenção':      'bg-amber-50 text-amber-700 border-amber-200',
+    'Erro de interpretação':'bg-amber-50 text-amber-700 border-amber-200',
+  };
+
   const statusCard = (card) => {
     const hoje = new Date().toISOString().split('T')[0];
     const proxima = card.proxima_revisao;
@@ -525,8 +538,8 @@ export default function PainelDoAluno() {
     if (salvandoCaderno) return;
     const idPlanilha = getSpreadsheetId();
     if (!idPlanilha) return;
-    if (!formCaderno.disciplina || !formCaderno.pergunta || !formCaderno.resposta) {
-      mostrarToast('Preencha disciplina, pergunta e resposta.', 'error');
+    if (!formCaderno.disciplina || !formCaderno.fonte || !formCaderno.classificacao || !formCaderno.pergunta || !formCaderno.resposta) {
+      mostrarToast('Preencha disciplina, fonte, classificação, questão e resposta.', 'error');
       return;
     }
     setSalvandoCaderno(true);
@@ -539,7 +552,7 @@ export default function PainelDoAluno() {
       });
       setCaderno(prev => [novoCard, ...prev]);
       setModalCadernoAberto(false);
-      setFormCaderno({ disciplina: '', topico: '', data: new Date().toLocaleDateString('pt-BR'), pergunta: '', resposta: '' });
+      setFormCaderno({ disciplina: '', topico: '', data: new Date().toISOString().split('T')[0], fonte: '', classificacao: '', pergunta: '', resposta: '' });
       mostrarToast('Card adicionado!');
     } catch { mostrarToast('Erro ao salvar.', 'error'); }
     finally { setSalvandoCaderno(false); }
@@ -1782,6 +1795,20 @@ export default function PainelDoAluno() {
                                 {status.label}
                               </span>
                             </div>
+                            {(card.fonte || card.classificacao) && (
+                              <div className="flex flex-wrap gap-1.5 mb-3">
+                                {card.fonte && (
+                                  <span className="text-[10px] font-semibold text-slate-500 bg-slate-100 border border-slate-200 rounded-full px-2 py-0.5">
+                                    {card.fonte}
+                                  </span>
+                                )}
+                                {card.classificacao && (
+                                  <span className={`text-[10px] font-semibold border rounded-full px-2 py-0.5 ${CLASSIFICACAO_ESTILO[card.classificacao] || 'bg-slate-50 text-slate-600 border-slate-200'}`}>
+                                    {card.classificacao}
+                                  </span>
+                                )}
+                              </div>
+                            )}
                             <p className="text-sm font-medium text-intento-blue leading-relaxed mb-4">{card.pergunta}</p>
                             {cardVirado[card.id] ? (
                               <div className="space-y-3">
@@ -1903,13 +1930,30 @@ export default function PainelDoAluno() {
                 <label className={labelClass}>Tópico</label>
                 <input type="text" placeholder="Ex: Funções Orgânicas, Revolução Francesa..." className={inputClass} value={formCaderno.topico} onChange={e => setFormCaderno({...formCaderno, topico: e.target.value})} />
               </div>
-              <div>
-                <label className={labelClass}>Pergunta / Enunciado</label>
-                <textarea rows={3} placeholder="Escreva a questão ou o conceito que errou..." className={inputClass + " resize-none"} value={formCaderno.pergunta} onChange={e => setFormCaderno({...formCaderno, pergunta: e.target.value})} />
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className={labelClass}>Fonte</label>
+                  <input type="text" placeholder="Ex: Simulado ENEM 2023, prova FUVEST..." className={inputClass} value={formCaderno.fonte} onChange={e => setFormCaderno({...formCaderno, fonte: e.target.value})} />
+                </div>
+                <div>
+                  <label className={labelClass}>Classificação do erro</label>
+                  <select className={inputClass} value={formCaderno.classificacao} onChange={e => setFormCaderno({...formCaderno, classificacao: e.target.value})}>
+                    <option value="">Selecionar...</option>
+                    {Object.entries(CLASSIFICACOES_CADERNO).map(([grupo, opcoes]) => (
+                      <optgroup key={grupo} label={grupo}>
+                        {opcoes.map(o => <option key={o} value={o}>{o}</option>)}
+                      </optgroup>
+                    ))}
+                  </select>
+                </div>
               </div>
               <div>
-                <label className={labelClass}>Resposta Correta</label>
-                <textarea rows={3} placeholder="Escreva a resposta ou explicação..." className={inputClass + " resize-none"} value={formCaderno.resposta} onChange={e => setFormCaderno({...formCaderno, resposta: e.target.value})} />
+                <label className={labelClass}>Questão errada</label>
+                <textarea rows={3} placeholder="Cole ou descreva a questão que você errou..." className={inputClass + " resize-none"} value={formCaderno.pergunta} onChange={e => setFormCaderno({...formCaderno, pergunta: e.target.value})} />
+              </div>
+              <div>
+                <label className={labelClass}>Resposta correta <span className="text-slate-400 font-normal normal-case">(fica oculta — recordação ativa)</span></label>
+                <textarea rows={3} placeholder="Resposta correta ou explicação completa..." className={inputClass + " resize-none"} value={formCaderno.resposta} onChange={e => setFormCaderno({...formCaderno, resposta: e.target.value})} />
               </div>
             </div>
             <div className="px-7 py-5 border-t border-slate-100 flex justify-end gap-3">

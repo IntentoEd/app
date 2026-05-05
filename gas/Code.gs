@@ -26,7 +26,8 @@ const ABA = {
   TOPICOS:          "BD_Topicos",
   LGPD_ACEITES:     "LGPD_Aceites",
   DISPONIBILIDADE_EXCECOES: "BD_Disponibilidade_Excecoes",
-  AVALIACOES:       "BD_Avaliacoes"
+  AVALIACOES:       "BD_Avaliacoes",
+  LOGS_ERRO_FRONTEND: "Logs_Erro_Frontend"
 };
 
 // BD_Disponibilidade_Excecoes (8 cols)
@@ -152,8 +153,14 @@ const COL_SIM = {
 
 const COL_CAD = {
   ID: 0, DISCIPLINA: 1, TOPICO: 2, DATA_ERRO: 3, PERGUNTA: 4,
-  RESPOSTA: 5, ESTAGIO: 6, PROXIMA_REVISAO: 7, HISTORICO: 8
+  RESPOSTA: 5, ESTAGIO: 6, PROXIMA_REVISAO: 7, HISTORICO: 8,
+  FONTE: 9, CLASSIFICACAO: 10
 };
+
+const CLASSIFICACOES_CADERNO = [
+  'Erro de recordação', 'Erro de lacuna',
+  'Erro de atenção', 'Erro de interpretação'
+];
 
 const COL_MENTOR = {
   EMAIL: 0, NOME: 1, STATUS: 2, DT_ENTRADA: 3
@@ -168,7 +175,11 @@ const COL_BD_ONB = {
   NOTA_MAT: 21, NOTA_REDACAO: 22, TECNICA_INICIO: 23
 };
 
-const VALIDAR_TOKEN = false;
+// Defesa server-to-server: o /exec é uma URL pública. Sem token, qualquer um
+// na internet pode chamar qualquer ação. O Next.js injeta API_TOKEN em todo
+// payload via lib/gasClient.js. Para desligar temporariamente em debug, mude
+// pra false — mas NUNCA faça deploy em produção com false.
+const VALIDAR_TOKEN = true;
 
 
 // =====================================================================
@@ -238,7 +249,11 @@ function doPost(e) {
 
     if (VALIDAR_TOKEN) {
       const tokenEsperado = PropertiesService.getScriptProperties().getProperty("API_TOKEN");
-      if (!tokenEsperado || dados.token !== tokenEsperado)
+      if (!tokenEsperado) {
+        Logger.log("ERRO DE CONFIG: API_TOKEN não está em Script Properties. Setar via Project Settings > Script Properties.");
+        return responderJSON({ status: "erro", mensagem: "Servidor mal configurado." }, 500);
+      }
+      if (dados.token !== tokenEsperado)
         return responderJSON({ status: "erro", mensagem: "Não autorizado." }, 401);
     }
 
@@ -296,6 +311,7 @@ function doPost(e) {
     if (acao === "removerExcecaoDisponibilidade") return handleRemoverExcecaoDisponibilidade(dados);
     if (acao === "listarExcecoesDisponibilidade") return handleListarExcecoesDisponibilidade(dados);
     if (acao === "cargaPorVendedorNoMes")   return handleCargaPorVendedorNoMes(dados);
+    if (acao === "registrarErroFrontend")   return handleRegistrarErroFrontend(dados);
 
     throw new Error("Ação não reconhecida: " + acao);
 
@@ -788,6 +804,35 @@ function responderJSON(objeto) {
     .setMimeType(ContentService.MimeType.JSON);
 }
 
+// Recebe erros não-tratados do frontend (Error Boundary do Next).
+// Não exige autorização — erros podem acontecer pré-login. O Next já filtra
+// chamadas externas pelo GAS_API_TOKEN, então só nosso próprio frontend chega.
+// Limita tamanho de campos pra evitar log inflado por stack gigante.
+function handleRegistrarErroFrontend(dados) {
+  try {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    let aba = ss.getSheetByName(ABA.LOGS_ERRO_FRONTEND);
+    if (!aba) {
+      aba = ss.insertSheet(ABA.LOGS_ERRO_FRONTEND);
+      aba.appendRow(['timestamp', 'email', 'url', 'message', 'stack', 'user_agent']);
+      aba.setFrozenRows(1);
+    }
+    aba.appendRow([
+      new Date(),
+      emailNorm(dados.email).slice(0, 120),
+      txt(dados.url).slice(0, 500),
+      txt(dados.message).slice(0, 500),
+      txt(dados.stack).slice(0, 4000),
+      txt(dados.userAgent).slice(0, 300)
+    ]);
+    return responderJSON({ status: 'sucesso' });
+  } catch (e) {
+    // Não deixa erro do log de erro virar erro pro client.
+    Logger.log('handleRegistrarErroFrontend EXCEPTION: ' + e.message);
+    return responderJSON({ status: 'sucesso' });
+  }
+}
+
 function registrarErro(error, payloadRecebido) {
   try {
     const ssErro    = SpreadsheetApp.getActiveSpreadsheet();
@@ -795,6 +840,68 @@ function registrarErro(error, payloadRecebido) {
     if (!sheetErro) sheetErro = ssErro.insertSheet(ABA.LOGS_ERRO);
     sheetErro.appendRow([new Date(), error.message, error.stack, payloadRecebido]);
   } catch (eLog) { console.error("Falha catastrófica:", eLog); }
+}
+
+// Cron diário — manda email pro EMAIL_GESTOR se houve erro novo nas últimas
+// 24h. Sem isso, erros caem no Logs_Erro silenciosamente e ninguém vê até
+// alguém abrir a aba. Configurar trigger time-based diário (qualquer hora,
+// idealmente cedo) no editor do Apps Script: Triggers > cronAvisoErrosNovos.
+function cronAvisoErrosNovos() {
+  Logger.log('===== cronAvisoErrosNovos =====');
+  try {
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var aba = ss.getSheetByName(ABA.LOGS_ERRO);
+    if (!aba || aba.getLastRow() < 2) {
+      Logger.log('Sem aba ou aba vazia — nada a notificar.');
+      return;
+    }
+    var corte = new Date();
+    corte.setHours(corte.getHours() - 24);
+
+    var matriz = aba.getDataRange().getValues();
+    var novos = [];
+    for (var i = 1; i < matriz.length; i++) {
+      var ts = matriz[i][0];
+      if (!(ts instanceof Date)) continue;
+      if (ts >= corte) {
+        novos.push({
+          ts: ts,
+          message: txt(matriz[i][1]),
+          payload: txt(matriz[i][3]).slice(0, 200)
+        });
+      }
+    }
+
+    if (novos.length === 0) {
+      Logger.log('Nenhum erro novo nas últimas 24h.');
+      return;
+    }
+
+    // Agrupa por mensagem pra reduzir ruído (mesmo erro 50x = 1 linha no email)
+    var porMsg = {};
+    novos.forEach(function(e) {
+      var k = e.message || '(sem mensagem)';
+      if (!porMsg[k]) porMsg[k] = { count: 0, ultimo: e.ts, payloadExemplo: e.payload };
+      porMsg[k].count++;
+      if (e.ts > porMsg[k].ultimo) porMsg[k].ultimo = e.ts;
+    });
+
+    var assunto = '⚠️ Intento — ' + novos.length + ' erro(s) novo(s) nas últimas 24h';
+    var corpo = 'Resumo dos erros novos em Logs_Erro (agrupados por mensagem):\n\n';
+    Object.keys(porMsg).forEach(function(msg) {
+      var info = porMsg[msg];
+      corpo += '• [' + info.count + 'x] ' + msg + '\n';
+      corpo += '  último: ' + Utilities.formatDate(info.ultimo, 'GMT-3', 'dd/MM HH:mm') + '\n';
+      if (info.payloadExemplo) corpo += '  payload: ' + info.payloadExemplo + '\n';
+      corpo += '\n';
+    });
+    corpo += '\nVer aba Logs_Erro pra detalhes completos.\n';
+
+    MailApp.sendEmail(EMAIL_GESTOR, assunto, corpo);
+    Logger.log('Email enviado: ' + novos.length + ' erro(s).');
+  } catch (e) {
+    Logger.log('cronAvisoErrosNovos EXCEPTION: ' + e.message);
+  }
 }
 
 function removerAcentos(str) {
@@ -880,6 +987,7 @@ function handleAvaliarEncontroPassado(dados) {
   try {
     lock.waitLock(10000);
     const idPlanilha = exigirIdPlanilha(dados);
+    _exigirAcessoAluno(dados.email, idPlanilha);
     const abaDiario  = SpreadsheetApp.openById(idPlanilha).getSheetByName(ABA.ENCONTROS);
     if (!abaDiario) throw new Error("Aba '" + ABA.ENCONTROS + "' não encontrada.");
     const linha = parseInt(dados.linha);
@@ -898,6 +1006,7 @@ function handleEditarEncontro(dados) {
   try {
     lock.waitLock(10000);
     const idPlanilha = exigirIdPlanilha(dados);
+    _exigirAcessoAluno(dados.email, idPlanilha);
     const abaDiario  = SpreadsheetApp.openById(idPlanilha).getSheetByName(ABA.ENCONTROS);
     if (!abaDiario) throw new Error("Aba '" + ABA.ENCONTROS + "' não encontrada.");
     const linha = parseInt(dados.linha);
@@ -926,6 +1035,7 @@ function handleSalvarNovoEncontro(dados) {
   try {
     lock.waitLock(10000);
     const idPlanilha = exigirIdPlanilha(dados);
+    _exigirAcessoAluno(dados.email, idPlanilha);
     const abaDiario  = SpreadsheetApp.openById(idPlanilha).getSheetByName(ABA.ENCONTROS);
     if (!abaDiario) throw new Error("Aba '" + ABA.ENCONTROS + "' não encontrada.");
     const dataHoje = Utilities.formatDate(new Date(), "GMT-3", "dd/MM/yyyy");
@@ -953,6 +1063,7 @@ function handleSalvarSemanaLote(dados) {
   try {
     lock.waitLock(10000);
     const idPlanilha     = exigirIdPlanilha(dados, "idPlanilhaAluno");
+    _exigirAcessoAluno(dados.email, idPlanilha);
     const rotinaCompleta = Array.isArray(dados.rotina) ? dados.rotina : [];
     const ssAluno        = SpreadsheetApp.openById(idPlanilha);
     const abaDB          = ssAluno.getSheetByName(ABA.SEMANA);
@@ -1090,6 +1201,7 @@ function handleBuscarMetaAnterior(dados) {
   try {
     const idPlanilha = txt(dados.idAluno);
     if (!idPlanilha) return responderJSON({ status: "erro", mensagem: "idAluno obrigatório" });
+    _exigirAcessoAluno(dados.email, idPlanilha);
     const ssAluno = SpreadsheetApp.openById(idPlanilha);
     const aba = ssAluno.getSheetByName(ABA.REGISTROS);
     if (!aba) return responderJSON({ status: "sucesso", metaSemanal: "" });
@@ -1109,6 +1221,7 @@ function handleSalvarRegistroGlobal(dados) {
   try {
     lock.waitLock(10000);
     const idPlanilha = exigirIdPlanilha(dados, "idAluno");
+    _exigirAcessoAluno(dados.email, idPlanilha);
     const ssAluno    = SpreadsheetApp.openById(idPlanilha);
     const abaDB      = ssAluno.getSheetByName(ABA.REGISTROS);
     if (!abaDB) return responderJSON({ status: "erro", mensagem: "Aba '" + ABA.REGISTROS + "' não encontrada." });
@@ -1255,6 +1368,7 @@ function lerSimulados(ss) {
 function handleBuscarDadosAluno(dados) {
   try {
     const idPlanilha    = exigirIdPlanilha(dados, "idPlanilhaAluno");
+    _exigirAcessoAluno(dados.email, idPlanilha);
     const ssAluno       = SpreadsheetApp.openById(idPlanilha);
     const pacoteDeDados = { status: "sucesso", semana: [], registros: [], diarios: [], tipoAluno: 'ENEM' };
 
@@ -1368,6 +1482,7 @@ function handleSalvarSimulado(dados) {
   try {
     lock.waitLock(10000);
     const idPlanilha = exigirIdPlanilha(dados);
+    _exigirAcessoAluno(dados.email, idPlanilha);
     const ssAluno    = SpreadsheetApp.openById(idPlanilha);
     const aba        = ssAluno.getSheetByName(ABA.SIMULADOS);
     if (!aba) throw new Error("Aba '" + ABA.SIMULADOS + "' não encontrada.");
@@ -1390,6 +1505,7 @@ function handleSalvarAutopsia(dados) {
   try {
     lock.waitLock(10000);
     const idPlanilha  = exigirIdPlanilha(dados);
+    _exigirAcessoAluno(dados.email, idPlanilha);
     const ssAluno     = SpreadsheetApp.openById(idPlanilha);
     const aba         = ssAluno.getSheetByName(ABA.SIMULADOS);
     if (!aba) throw new Error("Aba '" + ABA.SIMULADOS + "' não encontrada.");
@@ -1447,11 +1563,26 @@ function handleBuscarTopicosGlobais() {
 // CADERNO DE ERROS
 // =====================================================================
 
+// Adiciona colunas fonte/classificacao em BD_Caderno se não existirem.
+// Idempotente; chamada dentro dos handlers pra cobrir planilhas antigas
+// criadas com layout de 9 colunas.
+function _garantirColunasCaderno_(aba) {
+  var lastCol = aba.getLastColumn();
+  if (lastCol >= 11) return;
+  var alvo = ['fonte', 'classificacao'];
+  for (var k = lastCol; k < 9 + alvo.length; k++) {
+    if (k < 9) continue;
+    aba.getRange(1, k + 1).setValue(alvo[k - 9]);
+  }
+}
+
 function handleListarCaderno(dados) {
   try {
     const idPlanilha = exigirIdPlanilha(dados);
+    _exigirAcessoAluno(dados.email, idPlanilha);
     const aba        = SpreadsheetApp.openById(idPlanilha).getSheetByName(ABA.CADERNO);
     if (!aba) return responderJSON({ status: "sucesso", cards: [] });
+    _garantirColunasCaderno_(aba);
     const hoje  = Utilities.formatDate(new Date(), "GMT-3", "yyyy-MM-dd");
     const linhas = aba.getDataRange().getValues();
     const cards  = linhas.slice(1).map(function(r) {
@@ -1462,7 +1593,9 @@ function handleListarCaderno(dados) {
         proxima_revisao: r[COL_CAD.PROXIMA_REVISAO]
           ? Utilities.formatDate(new Date(r[COL_CAD.PROXIMA_REVISAO]), "GMT-3", "yyyy-MM-dd")
           : hoje,
-        historico: r[COL_CAD.HISTORICO] || "[]"
+        historico: r[COL_CAD.HISTORICO] || "[]",
+        fonte: r[COL_CAD.FONTE] || "",
+        classificacao: r[COL_CAD.CLASSIFICACAO] || ""
       };
     }).filter(function(c) { return c.id; });
     return responderJSON({ status: "sucesso", cards: cards });
@@ -1474,16 +1607,23 @@ function handleSalvarCardCaderno(dados) {
   try {
     lock.waitLock(10000);
     const idPlanilha = exigirIdPlanilha(dados);
+    _exigirAcessoAluno(dados.email, idPlanilha);
     const ss         = SpreadsheetApp.openById(idPlanilha);
     let aba          = ss.getSheetByName(ABA.CADERNO);
     if (!aba) {
       aba = ss.insertSheet(ABA.CADERNO);
-      aba.appendRow(["id","disciplina","topico","data_erro","pergunta","resposta","estagio","proxima_revisao","historico"]);
+      aba.appendRow(["id","disciplina","topico","data_erro","pergunta","resposta","estagio","proxima_revisao","historico","fonte","classificacao"]);
+    }
+    _garantirColunasCaderno_(aba);
+    const classificacao = txt(dados.classificacao);
+    if (classificacao && CLASSIFICACOES_CADERNO.indexOf(classificacao) === -1) {
+      return responderJSON({ status: "erro", mensagem: "classificação inválida" });
     }
     const hoje = Utilities.formatDate(new Date(), "GMT-3", "yyyy-MM-dd");
     aba.appendRow([txt(dados.id), txt(dados.disciplina), txt(dados.topico),
       txt(dados.data), txt(dados.pergunta), txt(dados.resposta),
-      0, calcularProximaRevisao(hoje, 0), "[]"]);
+      0, calcularProximaRevisao(hoje, 0), "[]",
+      txt(dados.fonte), classificacao]);
     return responderJSON({ status: "sucesso" });
   } catch (e) { return responderJSON({ status: "erro", mensagem: e.message }); }
   finally     { lock.releaseLock(); }
@@ -1494,6 +1634,7 @@ function handleIncrementarRepeticao(dados) {
   try {
     lock.waitLock(10000);
     const idPlanilha  = exigirIdPlanilha(dados);
+    _exigirAcessoAluno(dados.email, idPlanilha);
     const aba         = SpreadsheetApp.openById(idPlanilha).getSheetByName(ABA.CADERNO);
     if (!aba) return responderJSON({ status: "erro", mensagem: "'" + ABA.CADERNO + "' não encontrada." });
     const linhas      = aba.getDataRange().getValues();
@@ -1514,6 +1655,7 @@ function handleDeletarCardCaderno(dados) {
   try {
     lock.waitLock(10000);
     const idPlanilha  = exigirIdPlanilha(dados);
+    _exigirAcessoAluno(dados.email, idPlanilha);
     const aba         = SpreadsheetApp.openById(idPlanilha).getSheetByName(ABA.CADERNO);
     if (!aba) return responderJSON({ status: "erro", mensagem: "'" + ABA.CADERNO + "' não encontrada." });
     const linhas      = aba.getDataRange().getValues();
@@ -1531,6 +1673,7 @@ function handleRegistrarRevisaoCaderno(dados) {
   try {
     lock.waitLock(10000);
     const idPlanilha  = exigirIdPlanilha(dados);
+    _exigirAcessoAluno(dados.email, idPlanilha);
     const aba         = SpreadsheetApp.openById(idPlanilha).getSheetByName(ABA.CADERNO);
     if (!aba) return responderJSON({ status: "erro", mensagem: "'" + ABA.CADERNO + "' não encontrada." });
     const linhas      = aba.getDataRange().getValues();
@@ -1571,6 +1714,7 @@ function calcularProximaRevisao(dataBaseStr, estagio) {
 function handleBuscarOnboarding(dados) {
   try {
     const idPlanilha = exigirIdPlanilha(dados, "idPlanilhaAluno");
+    _exigirAcessoAluno(dados.email, idPlanilha);
     const ssAluno    = SpreadsheetApp.openById(idPlanilha);
 
     // Onboarding (formulário inicial)
@@ -1623,6 +1767,7 @@ function handleEditarRegistro(dados) {
   try {
     lock.waitLock(10000);
     const idPlanilha = exigirIdPlanilha(dados);
+    _exigirAcessoAluno(dados.email, idPlanilha);
     const aba        = SpreadsheetApp.openById(idPlanilha).getSheetByName(ABA.REGISTROS);
     if (!aba) return responderJSON({ status: "erro", mensagem: "'" + ABA.REGISTROS + "' não encontrada." });
     const matrix      = aba.getDataRange().getValues();
@@ -1660,6 +1805,7 @@ function handleVerificarRegistroSemana(dados) {
     const idPlanilha = txt(dados.idAluno);
     const semana     = txt(dados.semana);
     if (!idPlanilha || !semana) return responderJSON({ status: "erro", mensagem: "idAluno e semana obrigatórios" });
+    _exigirAcessoAluno(dados.email, idPlanilha);
     const aba = SpreadsheetApp.openById(idPlanilha).getSheetByName(ABA.REGISTROS);
     if (!aba) return responderJSON({ status: "sucesso", existe: false });
     const matrix = aba.getDataRange().getValues();
@@ -1683,6 +1829,7 @@ function handleDeletarRegistro(dados) {
   try {
     lock.waitLock(10000);
     const idPlanilha = exigirIdPlanilha(dados, "idAluno");
+    _exigirAcessoAluno(dados.email, idPlanilha);
     const aba = SpreadsheetApp.openById(idPlanilha).getSheetByName(ABA.REGISTROS);
     if (!aba) return responderJSON({ status: "erro", mensagem: "'" + ABA.REGISTROS + "' não encontrada." });
     const semana = txt(dados.semana);
@@ -2232,6 +2379,28 @@ function _ehLider(email) {
   return email === 'filippe@metodointento.com.br';
 }
 
+// Authz: garante que o requester é líder, mentor responsável OU o próprio aluno.
+// Lança erro se sem permissão. Usar em qualquer handler que aceite
+// idPlanilhaAluno/idAluno do payload e devolva ou modifique dados do aluno.
+// Sem isso, qualquer email autenticado consegue acessar dados de qualquer aluno.
+// Importante: o `email` aqui DEVE ser o email vindo do Firebase ID Token
+// (sobrescrito pelo Next em ACOES_AUTENTICADAS), nunca o do body cru.
+function _exigirAcessoAluno(emailRequester, idPlanilhaAluno) {
+  var email = emailNorm(emailRequester);
+  if (!email) {
+    throw new Error('Sem identidade — token ausente.');
+  }
+  if (_ehLider(email)) return { papel: 'lider', aluno: null };
+  var aluno = _acharAlunoPorId(idPlanilhaAluno);
+  if (aluno.linha === -1) {
+    // Não revela se o id existe ou não — mensagem genérica.
+    throw new Error('Aluno não encontrado ou acesso negado.');
+  }
+  if (email === aluno.mentor) return { papel: 'mentor', aluno: aluno };
+  if (email === aluno.email)  return { papel: 'aluno',  aluno: aluno };
+  throw new Error('Acesso negado a este aluno.');
+}
+
 // Valida uma avaliação a cadastrar. Retorna { ok, erro?, normalizada? }
 function _validarAvaliacao(av, idx) {
   var prefix = 'avaliação #' + (idx + 1) + ': ';
@@ -2593,11 +2762,18 @@ function handleListarPushSubscriptions(dados) {
 // =====================================================================
 
 // Helper: dispara 1 push notification via /api/push/send
+// Requer Script Property AGENT_API_TOKEN (mesmo valor da env AGENT_API_TOKEN no Vercel).
 function _enviarPush(email, title, body, url) {
   try {
+    var agentToken = PropertiesService.getScriptProperties().getProperty("AGENT_API_TOKEN");
+    if (!agentToken) {
+      Logger.log('_enviarPush abortado: AGENT_API_TOKEN ausente em Script Properties');
+      return;
+    }
     UrlFetchApp.fetch(URL_APP + '/api/push/send', {
       method: 'post',
       contentType: 'application/json',
+      headers: { 'x-agent-token': agentToken },
       payload: JSON.stringify({ email: email, title: title, body: body, url: url || '/' }),
       muteHttpExceptions: true,
     });
