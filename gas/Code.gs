@@ -2941,6 +2941,17 @@ function handleDeletarLead(dados) {
     if (loc.linha === -1) return responderJSON({ status: 'erro', mensagem: 'lead não encontrado' });
     var matriz = loc.aba.getRange(loc.linha, 1, 1, 27).getValues()[0];
     var lead = _leadToObj(matriz);
+
+    // Permissões: vendedor não-líder só pode deletar lead próprio ou sem dono.
+    var emailRequisitanteDel = emailNorm(dados.porEmail);
+    var ehLiderDel = (emailRequisitanteDel === 'filippe@metodointento.com.br' || emailRequisitanteDel === 'rafael@metodointento.com.br');
+    if (!ehLiderDel) {
+      var donoAtualDel = emailNorm(matriz[COL_LEAD.VENDEDOR]);
+      if (donoAtualDel && donoAtualDel !== emailRequisitanteDel) {
+        return responderJSON({ status: 'erro', codigo: 403, mensagem: 'sem permissão pra deletar lead de outro vendedor' });
+      }
+    }
+
     var snapshot = lead.nome + ' / ' + lead.email + ' / ' + lead.telefone + ' (fase: ' + lead.fase + ')';
     registrarEventoPipeline(idLead, 'apagado', lead.fase || '', '', emailNorm(dados.porEmail) || '');
     // Adiciona o snapshot no campo paraFase pro contexto do log (já que o evento "apagado"
@@ -3348,6 +3359,23 @@ function handleEditarLead(dados) {
     var aba = loc.aba;
     var matriz = aba.getRange(loc.linha, 1, 1, 27).getValues()[0];
 
+    // Permissões: vendedor não-líder só pode editar lead próprio ou sem dono;
+    // se está mexendo em "vendedor", só pode atribuir a si mesmo (ou desatribuir).
+    var emailRequisitante = emailNorm(dados.porEmail);
+    var ehLiderReq = (emailRequisitante === 'filippe@metodointento.com.br' || emailRequisitante === 'rafael@metodointento.com.br');
+    if (!ehLiderReq) {
+      var donoAtual = emailNorm(matriz[COL_LEAD.VENDEDOR]);
+      if (donoAtual && donoAtual !== emailRequisitante) {
+        return responderJSON({ status: 'erro', codigo: 403, mensagem: 'sem permissão pra editar lead de outro vendedor' });
+      }
+      if (typeof dados.vendedor !== 'undefined') {
+        var novoVendedor = emailNorm(dados.vendedor);
+        if (novoVendedor && novoVendedor !== emailRequisitante) {
+          return responderJSON({ status: 'erro', codigo: 403, mensagem: 'vendedor só pode atribuir lead a si mesmo' });
+        }
+      }
+    }
+
     // Atualiza só os campos que vieram (preserva fase via handler dedicado)
     var camposEditaveis = {
       nome: COL_LEAD.NOME,
@@ -3404,6 +3432,16 @@ function handleMoverLeadFase(dados) {
     if (FASES_LEAD.indexOf(novaFase) === -1)
       return responderJSON({ status: 'erro', mensagem: 'fase inválida: ' + novaFase });
 
+    // Permissões: vendedor não-líder só pode mover lead próprio ou sem dono.
+    var emailRequisitanteMv = emailNorm(dados.porEmail);
+    var ehLiderMv = (emailRequisitanteMv === 'filippe@metodointento.com.br' || emailRequisitanteMv === 'rafael@metodointento.com.br');
+    if (!ehLiderMv) {
+      var donoAtualMv = emailNorm(loc.aba.getRange(loc.linha, COL_LEAD.VENDEDOR + 1).getValue());
+      if (donoAtualMv && donoAtualMv !== emailRequisitanteMv) {
+        return responderJSON({ status: 'erro', codigo: 403, mensagem: 'sem permissão pra mover lead de outro vendedor' });
+      }
+    }
+
     var faseAtual = txt(loc.aba.getRange(loc.linha, COL_LEAD.FASE + 1).getValue());
     var agoraFase = new Date();
     loc.aba.getRange(loc.linha, COL_LEAD.FASE + 1).setValue(novaFase);
@@ -3433,13 +3471,17 @@ function handleListarLeads(dados) {
 
     var matriz = aba.getRange(2, 1, lastRow - 1, 27).getValues();
 
-    // Permissões: filippe + rafael veem tudo; vendedor só os seus
+    // Permissões: filippe + rafael veem tudo; vendedor vê os seus + leads sem dono
+    // (fila pública pra auto-atribuição — pegar lead da fila)
     var ehLider = (emailRequisitante === 'filippe@metodointento.com.br' || emailRequisitante === 'rafael@metodointento.com.br');
     var leads = [];
     for (var i = 0; i < matriz.length; i++) {
       var row = matriz[i];
       if (!txt(row[COL_LEAD.ID])) continue;
-      if (!ehLider && emailNorm(row[COL_LEAD.VENDEDOR]) !== emailRequisitante) continue;
+      if (!ehLider) {
+        var donoLead = emailNorm(row[COL_LEAD.VENDEDOR]);
+        if (donoLead && donoLead !== emailRequisitante) continue;
+      }
       leads.push(_leadToObj(row));
     }
 

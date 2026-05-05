@@ -77,6 +77,65 @@ function smokeTest() {
     return true;
   });
 
+  // 7) Token validado: API_TOKEN está configurado em Script Properties
+  check('API_TOKEN configurado em Script Properties', function() {
+    if (!VALIDAR_TOKEN) return 'VALIDAR_TOKEN está false — produção precisa true';
+    var tk = PropertiesService.getScriptProperties().getProperty('API_TOKEN');
+    if (!tk) return 'API_TOKEN ausente — Project Settings → Script Properties → API_TOKEN';
+    if (tk.length < 24) return 'API_TOKEN muito curto (esperado >= 24 chars). Use openssl rand -hex 32';
+    Logger.log('  → API_TOKEN ok (len=' + tk.length + ')');
+    return true;
+  });
+
+  // 8) doPost com token errado retorna 401
+  check('doPost rejeita payload sem token quando VALIDAR_TOKEN=true', function() {
+    if (!VALIDAR_TOKEN) return 'VALIDAR_TOKEN=false — SKIP';
+    var raw = doPost({ postData: { contents: JSON.stringify({ acao: 'login', email: SMOKE_EMAIL_LIDER }) } });
+    var data = JSON.parse(raw.getContent());
+    if (data.status !== 'erro') return 'esperado erro de auth: ' + JSON.stringify(data);
+    return true;
+  });
+
+  // 9) AGENT_API_TOKEN existe (necessário pros crons de push)
+  check('AGENT_API_TOKEN configurado em Script Properties', function() {
+    var tk = PropertiesService.getScriptProperties().getProperty('AGENT_API_TOKEN');
+    if (!tk) return 'AGENT_API_TOKEN ausente — push notifications via cron vão falhar silenciosamente';
+    Logger.log('  → AGENT_API_TOKEN ok (len=' + tk.length + ')');
+    return true;
+  });
+
+  // 10) IDOR fechado: _exigirAcessoAluno bloqueia email não autorizado
+  check('_exigirAcessoAluno bloqueia email não autorizado', function() {
+    if (typeof _exigirAcessoAluno !== 'function') return 'helper ausente';
+    // Pega um aluno qualquer pra ter um id válido
+    var lista = JSON.parse(handleListaAlunosMentor({ email: SMOKE_EMAIL_LIDER }).getContent());
+    if (!lista.alunos || lista.alunos.length === 0) return 'sem alunos pra testar — SKIP';
+    var idAlvo = lista.alunos[0].id;
+    try {
+      _exigirAcessoAluno(SMOKE_EMAIL_NAO_AUTH, idAlvo);
+      return 'permitiu acesso indevido — IDOR aberto';
+    } catch (e) {
+      // esperado: erro de acesso negado
+      Logger.log('  → bloqueio ok: ' + e.message);
+      return true;
+    }
+  });
+
+  // 11) _exigirAcessoAluno permite líder
+  check('_exigirAcessoAluno permite líder', function() {
+    if (typeof _exigirAcessoAluno !== 'function') return 'helper ausente';
+    var lista = JSON.parse(handleListaAlunosMentor({ email: SMOKE_EMAIL_LIDER }).getContent());
+    if (!lista.alunos || lista.alunos.length === 0) return 'sem alunos — SKIP';
+    var idAlvo = lista.alunos[0].id;
+    try {
+      var r = _exigirAcessoAluno(SMOKE_EMAIL_LIDER, idAlvo);
+      if (r.papel !== 'lider') return 'esperado papel=lider, veio ' + r.papel;
+      return true;
+    } catch (e) {
+      return 'líder bloqueado indevidamente: ' + e.message;
+    }
+  });
+
   Logger.log('===== ' + ok + ' OK · ' + sk + ' SKIP · ' + ko + ' FALHAS =====');
 }
 
