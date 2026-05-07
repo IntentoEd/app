@@ -231,7 +231,7 @@ export default function OnboardingWizard() {
     setEnviando(true);
     localStorage.setItem('intento_email_aluno', respostas.dadosPessoais.email.toLowerCase().trim());
     try {
-      await apiFetch('/api/mentor', {
+      const res = await apiFetch('/api/mentor', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -247,6 +247,13 @@ export default function OnboardingWizard() {
           },
         }),
       });
+      if (!res.ok) throw new Error('http_' + res.status);
+      const data = await res.json();
+      if (data.status === 'erro' || data.error) {
+        throw new Error(data.mensagem || data.error || 'erro_desconhecido');
+      }
+      // Só limpa rascunho APÓS confirmação de sucesso — se rede caiu antes,
+      // aluno consegue tentar de novo sem perder o que digitou.
       localStorage.removeItem(RASCUNHO_KEY);
       setSucesso(true);
       window.scrollTo(0, 0);
@@ -254,8 +261,9 @@ export default function OnboardingWizard() {
       const chave = `intento_checklist_${email}`;
       const cl = JSON.parse(localStorage.getItem(chave) || '{}');
       localStorage.setItem(chave, JSON.stringify({ ...cl, onboarding: true }));
-    } catch {
-      setErro('Erro ao conectar com o servidor. Tente novamente.');
+    } catch (e) {
+      console.error('[onboarding] enviar falhou:', e?.message);
+      setErro('Erro ao conectar com o servidor. Tente novamente — seu rascunho foi mantido.');
     } finally {
       setEnviando(false);
     }

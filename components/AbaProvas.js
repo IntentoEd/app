@@ -4,6 +4,7 @@ import { useEffect, useState, useMemo } from 'react';
 import { apiFetch } from '@/lib/api';
 import { auth } from '@/lib/firebase';
 import Boletim from '@/components/Boletim';
+import ConfirmDialog from '@/components/ConfirmDialog';
 
 // O gateway sobrescreve `email` com o do token Firebase pra ações autenticadas,
 // então enviar email='' aqui é seguro — o backend usa o usuário real.
@@ -118,6 +119,10 @@ export default function AbaProvas({ idAluno, alunoNome, escola }) {
   const [editSubstituiId, setEditSubstituiId] = useState('');
   const [salvandoEdit, setSalvandoEdit] = useState(false);
 
+  // Confirmação de delete (substitui window.confirm nativo)
+  const [provaParaDeletar, setProvaParaDeletar] = useState(null);
+  const [deletando, setDeletando] = useState(false);
+
   const carregarProvas = async () => {
     setErro('');
     try {
@@ -177,6 +182,7 @@ export default function AbaProvas({ idAluno, alunoNome, escola }) {
   };
 
   const validarLinhas = () => {
+    if (!Array.isArray(linhas) || linhas.length === 0) return 'Adicione pelo menos uma prova.';
     for (let i = 0; i < linhas.length; i++) {
       const l = linhas[i];
       if (!l.data) return `Linha ${i + 1}: data é obrigatória.`;
@@ -207,6 +213,7 @@ export default function AbaProvas({ idAluno, alunoNome, escola }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ acao: 'cadastrarAvaliacoes', email: emailRequester(), idAluno, avaliacoes }),
       });
+      if (!res.ok) { setErroBatch('Erro de servidor (' + res.status + ').'); return; }
       const data = await res.json();
       if (data.status !== 'sucesso') {
         setErroBatch(data.mensagem || 'Erro ao salvar.');
@@ -258,10 +265,12 @@ export default function AbaProvas({ idAluno, alunoNome, escola }) {
           materia,
           tipo: editTipo,
           observacao: editObs,
-          nota: editNota,
+          // Number garante coerção; null = nota ainda não lançada (vs 0 = zero real).
+          nota: editNota === '' ? null : Number(editNota),
           substituiId: editTipo === 'recuperacao' ? editSubstituiId : '',
         }),
       });
+      if (!res.ok) { alert('Erro de servidor (' + res.status + ').'); return; }
       const data = await res.json();
       if (data.status !== 'sucesso') { alert('Erro: ' + (data.mensagem || 'falha ao salvar')); return; }
       setProvaEditando(null);
@@ -273,19 +282,26 @@ export default function AbaProvas({ idAluno, alunoNome, escola }) {
     }
   };
 
-  const deletarProva = async (prova) => {
-    if (!confirm(`Deletar prova de ${prova.materia} de ${formatarData(prova.data)}?`)) return;
+  const deletarProva = (prova) => setProvaParaDeletar(prova);
+
+  const confirmarDelete = async () => {
+    if (!provaParaDeletar) return;
+    setDeletando(true);
     try {
       const res = await apiFetch('/api/mentor', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ acao: 'deletarAvaliacao', email: emailRequester(), idAvaliacao: prova.id }),
+        body: JSON.stringify({ acao: 'deletarAvaliacao', email: emailRequester(), idAvaliacao: provaParaDeletar.id }),
       });
+      if (!res.ok) { alert('Erro de servidor (' + res.status + ').'); return; }
       const data = await res.json();
       if (data.status !== 'sucesso') { alert('Erro: ' + (data.mensagem || 'falha ao deletar')); return; }
+      setProvaParaDeletar(null);
       await carregarProvas();
     } catch (e) {
       alert('Erro de conexão.');
+    } finally {
+      setDeletando(false);
     }
   };
 
@@ -620,13 +636,27 @@ export default function AbaProvas({ idAluno, alunoNome, escola }) {
               <button onClick={() => setProvaEditando(null)}
                       className="text-sm font-semibold text-slate-500 hover:text-intento-blue px-4 py-2 transition">Cancelar</button>
               <button onClick={salvarEdit} disabled={salvandoEdit}
-                      className="text-sm font-semibold bg-intento-blue hover:bg-blue-900 text-white px-5 py-2 rounded-lg transition disabled:opacity-40 disabled:cursor-not-allowed">
+                      data-loading={salvandoEdit}
+                      className="text-sm font-semibold bg-intento-blue hover:bg-blue-900 text-white px-5 py-2 rounded-lg transition disabled:opacity-40 disabled:cursor-not-allowed data-[loading=true]:cursor-wait inline-flex items-center gap-2">
+                {salvandoEdit && <span className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/40 border-t-white" />}
                 {salvandoEdit ? 'Salvando…' : 'Salvar'}
               </button>
             </div>
           </div>
         </div>
       )}
+      <ConfirmDialog
+        aberto={!!provaParaDeletar}
+        titulo="Deletar prova?"
+        descricao={provaParaDeletar
+          ? `Prova de ${provaParaDeletar.materia} de ${formatarData(provaParaDeletar.data)} será removida do boletim. Não dá pra desfazer.`
+          : ''}
+        textoConfirmar="Deletar"
+        tom="danger"
+        carregando={deletando}
+        onConfirmar={confirmarDelete}
+        onCancelar={() => setProvaParaDeletar(null)}
+      />
     </div>
   );
 }
