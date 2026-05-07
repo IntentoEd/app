@@ -24,7 +24,6 @@ export default function DiagnosticoTeorico() {
   const [emailBlindado, setEmailBlindado] = useState('');
   const [enviando, setEnviando] = useState(false);
   const [enviadoComSucesso, setEnviadoComSucesso] = useState(false);
-  const [confirmarParcial, setConfirmarParcial] = useState(false);
 
   const disciplinas = ['Biologia', 'Química', 'Física', 'Matemática'];
   const questoesDaVez = questoesData.filter(q => q.disciplina === disciplinaAtual);
@@ -70,7 +69,6 @@ export default function DiagnosticoTeorico() {
     const totalQuestoes = concluidas.length * 45 || 1;
     const porcentagemGeral = Math.round((totalAcertos / (disciplinas.length * 45)) * 100);
     setResultadoFinal({ detalhe: acertos, porcentagens, porcentagemGeral });
-    setConfirmarParcial(false);
     setEtapa('resultado');
     window.scrollTo(0, 0);
   };
@@ -282,41 +280,11 @@ export default function DiagnosticoTeorico() {
           ) : (
             <div className="bg-white border border-slate-200 rounded-xl p-5 text-center shadow-sm">
               <p className="text-sm font-medium text-intento-blue mb-1">
-                {faltam === 1 ? 'Falta 1 disciplina para concluir o diagnóstico completo.' : `Faltam ${faltam} disciplinas para concluir o diagnóstico completo.`}
+                {faltam === 1 ? 'Falta 1 disciplina para concluir o diagnóstico.' : `Faltam ${faltam} disciplinas para concluir o diagnóstico.`}
               </p>
-              <p className="text-xs text-slate-400 mb-4 font-medium">
-                Recomendamos completar todas para um plano mais preciso.
+              <p className="text-xs text-slate-400 font-medium">
+                Conclua todas as disciplinas para ver seus resultados.
               </p>
-
-              {/* Submissão parcial — claramente sinalizada */}
-              {!confirmarParcial ? (
-                <button onClick={() => setConfirmarParcial(true)}
-                  className="text-xs font-medium text-slate-400 hover:text-slate-600 underline underline-offset-2 transition">
-                  Enviar resultados parciais mesmo assim
-                </button>
-              ) : (
-                <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 text-left mt-2">
-                  <p className="text-sm font-semibold text-amber-800 mb-1 flex items-center gap-2">
-                    <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                    </svg>
-                    Envio parcial
-                  </p>
-                  <p className="text-xs text-amber-700 mb-3 leading-relaxed">
-                    As disciplinas não concluídas serão registradas com 0 acertos. Isso pode reduzir a precisão do seu plano de estudos.
-                  </p>
-                  <div className="flex gap-2">
-                    <button onClick={finalizarTesteGeral}
-                      className="flex-1 bg-amber-500 hover:bg-amber-600 text-white py-2 rounded-lg font-bold text-xs transition">
-                      Confirmar envio parcial
-                    </button>
-                    <button onClick={() => setConfirmarParcial(false)}
-                      className="flex-1 bg-white border border-slate-200 text-slate-600 py-2 rounded-lg font-bold text-xs hover:bg-slate-50 transition">
-                      Cancelar
-                    </button>
-                  </div>
-                </div>
-              )}
             </div>
           )}
         </div>
