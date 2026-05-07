@@ -2,15 +2,9 @@ export const dynamic = 'force-dynamic';
 
 import { NextResponse } from 'next/server';
 import { cancelarEvento } from '@/lib/googleCalendar';
+import { chamarGAS } from '@/lib/gasClient';
 
-async function gas(payload) {
-  const res = await fetch(process.env.GOOGLE_APPSCRIPT_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
-  return res.json();
-}
+const gas = chamarGAS;
 
 // Reagenda = cancela existente + agenda novo. Faz internamente chamando
 // /api/agenda/agendar pra reaproveitar toda a lógica de validação/escolha.

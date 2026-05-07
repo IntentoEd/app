@@ -1,24 +1,11 @@
 // app/api/submit/route.js
 import { NextResponse } from 'next/server';
+import { chamarGAS } from '@/lib/gasClient';
 
 export async function POST(request) {
   try {
     const dadosFormulario = await request.json();
-
-    // Injetamos a "acao" para o nosso Gateway no Google saber o que fazer
-    const payload = {
-      acao: 'onboarding',
-      ...dadosFormulario
-    };
-
-    const response = await fetch(process.env.GOOGLE_APPSCRIPT_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-      redirect: 'follow'
-    });
-
-    const data = await response.json();
+    const data = await chamarGAS({ acao: 'onboarding', ...dadosFormulario });
 
     if (data.status === 'erro') {
       return NextResponse.json({ error: data.mensagem }, { status: 400 });

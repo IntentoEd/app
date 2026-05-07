@@ -1,6 +1,7 @@
 export const dynamic = 'force-dynamic';
 
 import { NextResponse } from 'next/server';
+import { chamarGAS } from '@/lib/gasClient';
 
 // Aceita 2 formatos de payload do Typebot/Make:
 // (A) já mapeado: { nome, tipoPerfil, nomeRelacionado, telefone, ... }
@@ -152,12 +153,7 @@ export async function POST(request) {
       ...norm,
     };
 
-    const res = await fetch(process.env.GOOGLE_APPSCRIPT_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-    const data = await res.json();
+    const data = await chamarGAS(payload);
 
     if (data.status === 'erro') return NextResponse.json(data, { status: 500 });
     return NextResponse.json(data);

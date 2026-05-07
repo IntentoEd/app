@@ -2,15 +2,9 @@ export const dynamic = 'force-dynamic';
 
 import { NextResponse } from 'next/server';
 import { verificarUsuario } from '@/lib/auth';
+import { chamarGAS } from '@/lib/gasClient';
 
-async function gas(payload) {
-  const res = await fetch(process.env.GOOGLE_APPSCRIPT_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
-  return res.json();
-}
+const gas = chamarGAS;
 
 export async function POST(request) {
   // Auth obrigatória — Firebase ID token verificado.

@@ -2,20 +2,14 @@ export const dynamic = 'force-dynamic';
 
 import { NextResponse } from 'next/server';
 import { gerarSlotsLivres, formatarHorarioBR } from '@/lib/googleCalendar';
+import { chamarGAS } from '@/lib/gasClient';
 
 const DUR_DEFAULT = 30;
 const ANTECEDENCIA_MIN_HORAS = 4;
 const DIAS_DEFAULT = 7;
 const MAX_SUGESTOES = 30;
 
-async function gas(payload) {
-  const res = await fetch(process.env.GOOGLE_APPSCRIPT_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
-  return res.json();
-}
+const gas = chamarGAS;
 
 export async function GET(request) {
   const token = request.headers.get('x-agent-token');
