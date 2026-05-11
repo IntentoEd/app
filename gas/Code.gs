@@ -73,7 +73,8 @@ const COL_MESTRE = {
   NOTA_LINGUAGENS: 15, NOTA_HUMANAS: 16, NOTA_NATUREZA: 17, NOTA_MATEMATICA: 18,
   NOTA_REDACAO: 19, ID_PLANILHA: 20, MENTOR_RESPONSAVEL: 21, STATUS_ONBOARDING: 22,
   PLANO: 23,
-  TIPO_ALUNO: 24, TURMA: 25, ESCOLA: 26, FASE: 27
+  TIPO_ALUNO: 24, TURMA: 25, ESCOLA: 26, FASE: 27,
+  DT_SAIDA: 28
 };
 
 const TIPOS_ALUNO = ['ENEM', 'EM'];
@@ -287,6 +288,7 @@ function doPost(e) {
     if (acao === "dashboardLider")          return handleDashboardLider(dados);
     if (acao === "designarMentor")          return handleDesignarMentor(dados);
     if (acao === "atualizarDadosAluno")     return handleAtualizarDadosAluno(dados);
+    if (acao === "inativarAluno")           return handleInativarAluno(dados);
     if (acao === "cadastrarAvaliacoes")     return handleCadastrarAvaliacoes(dados);
     if (acao === "listarAvaliacoesAluno")   return handleListarAvaliacoesAluno(dados);
     if (acao === "atualizarAvaliacao")      return handleAtualizarAvaliacao(dados);
@@ -945,6 +947,8 @@ function handleListaAlunosMentor(dados) {
 
   const listaFiltrada = [];
   for (let i = 1; i < matriz.length; i++) {
+    // Mentor não vê alunos inativos (DT_SAIDA preenchida)
+    if (matriz[i][COL_MESTRE.DT_SAIDA]) continue;
     if (emailNorm(matriz[i][colMentor]) === emailMentor) {
       listaFiltrada.push({
         id:     matriz[i][COL_MESTRE.ID_PLANILHA],
@@ -2127,13 +2131,34 @@ function handleDashboardLider(dados) {
     var mentoresAtivos = lerMentoresAtivos();
     var cacheAlunos    = lerCacheTodos();
     var alunos = [];
+    var pendencias = []; // alunos em "Aguardando Diagnóstico" — líder precisa designar mentor / cobrar diagnóstico
     for (var i = 1; i < matriz.length; i++) {
       var row = matriz[i];
       var statusOn   = txt(row[COL_MESTRE.STATUS_ONBOARDING]);
       var idPlanilha = txt(row[COL_MESTRE.ID_PLANILHA]);
-      if (statusOn !== 'Onboarding Completo' || !idPlanilha) continue;
+      if (!idPlanilha) continue;
+      // Aluno marcado como inativo (DT_SAIDA preenchida) é ignorado em ambas as listas.
+      if (row[COL_MESTRE.DT_SAIDA]) continue;
+
       var emailMentor = emailNorm(row[COL_MESTRE.MENTOR_RESPONSAVEL]);
       var mentorObj = mentoresAtivos[emailMentor];
+
+      if (statusOn === 'Aguardando Diagnóstico') {
+        pendencias.push({
+          idAluno: idPlanilha,
+          nome:    txt(row[COL_MESTRE.NOME]),
+          email:   emailNorm(row[COL_MESTRE.EMAIL]),
+          mentor:  emailMentor,
+          mentorNome:  mentorObj ? mentorObj.nome : (emailMentor || ''),
+          mentorAtivo: !!mentorObj,
+          dataMatricula: row[COL_MESTRE.TIMESTAMP],
+          tipoAluno: txt(row[COL_MESTRE.TIPO_ALUNO]) || 'ENEM',
+          escola: txt(row[COL_MESTRE.ESCOLA])
+        });
+        continue;
+      }
+      if (statusOn !== 'Onboarding Completo') continue;
+
       var c = cacheAlunos[idPlanilha] || {};
       var plano = txt(row[COL_MESTRE.PLANO]);
       var dataMatricula = row[COL_MESTRE.TIMESTAMP];
@@ -2159,19 +2184,61 @@ function handleDashboardLider(dados) {
     }).sort(function(a, b) { return a.nome.localeCompare(b.nome); });
 
     if (dados.skipAgregado) {
-      return responderJSON({ status: 'sucesso', semanaAtual: semanaAtual, alunos: alunos, mentoresAtivos: listaMentoresAtivos, agregado: null });
+      return responderJSON({ status: 'sucesso', semanaAtual: semanaAtual, alunos: alunos, pendencias: pendencias, mentoresAtivos: listaMentoresAtivos, agregado: null });
     }
 
-    Logger.log('dashboardLider: agregando ' + alunos.length + ' alunos');
+    Logger.log('dashboardLider: agregando ' + alunos.length + ' alunos · ' + pendencias.length + ' pendência(s)');
     var t0 = new Date().getTime();
     var agregado = agregarMetricasBase_(alunos);
     Logger.log('dashboardLider: agregado em ' + ((new Date().getTime() - t0) / 1000) + 's');
 
-    return responderJSON({ status: 'sucesso', semanaAtual: semanaAtual, alunos: alunos, mentoresAtivos: listaMentoresAtivos, agregado: agregado });
+    return responderJSON({ status: 'sucesso', semanaAtual: semanaAtual, alunos: alunos, pendencias: pendencias, mentoresAtivos: listaMentoresAtivos, agregado: agregado });
   } catch (e) {
     Logger.log('dashboardLider EXCEPTION: ' + e.message);
     return responderJSON({ status: 'erro', mensagem: e.message });
   }
+}
+
+// =====================================================================
+// INATIVAR ALUNO (líder marca aluno como saiu da mentoria)
+// =====================================================================
+// Setamos DT_SAIDA = hoje. Aluno some do dashboardLider, listaAlunosMentor
+// e qualquer filtro futuro que considerar "ativo". Não deleta a linha
+// (preserva histórico). Reversível: limpar a célula DT_SAIDA manualmente
+// no Sheets reativa.
+function handleInativarAluno(dados) {
+  var lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(10000);
+
+    var emailRequester = emailNorm(dados.email);
+    if (!_ehLider(emailRequester)) {
+      return responderJSON({ status: 'erro', codigo: 403, mensagem: 'Apenas líder pode inativar alunos.' });
+    }
+
+    var idAluno = txt(dados.idAluno);
+    if (!idAluno) return responderJSON({ status: 'erro', mensagem: 'idAluno obrigatório' });
+
+    var ssMestre = SpreadsheetApp.getActiveSpreadsheet();
+    var aba = ssMestre.getSheetByName(ABA.MESTRE);
+    if (!aba) throw new Error('BD_Alunos não encontrada');
+
+    var matriz = aba.getDataRange().getValues();
+    for (var i = 1; i < matriz.length; i++) {
+      if (txt(matriz[i][COL_MESTRE.ID_PLANILHA]) === idAluno) {
+        if (matriz[i][COL_MESTRE.DT_SAIDA]) {
+          return responderJSON({ status: 'erro', codigo: 'ja_inativo', mensagem: 'Aluno já está inativo desde ' + matriz[i][COL_MESTRE.DT_SAIDA] });
+        }
+        aba.getRange(i + 1, COL_MESTRE.DT_SAIDA + 1).setValue(new Date());
+        Logger.log('handleInativarAluno: ' + idAluno + ' inativado por ' + emailRequester);
+        return responderJSON({ status: 'sucesso', idAluno: idAluno });
+      }
+    }
+    return responderJSON({ status: 'erro', mensagem: 'Aluno não encontrado em BD_Alunos' });
+  } catch (e) {
+    Logger.log('handleInativarAluno EXCEPTION: ' + e.message);
+    return responderJSON({ status: 'erro', mensagem: e.message });
+  } finally { lock.releaseLock(); }
 }
 
 

@@ -23,7 +23,7 @@ const ACOES_AUTENTICADAS = new Set([
   'criarExcecaoDisponibilidade', 'removerExcecaoDisponibilidade',
   'listarExcecoesDisponibilidade',
   // Líder
-  'dashboardLider', 'designarMentor', 'atualizarDadosAluno',
+  'dashboardLider', 'designarMentor', 'atualizarDadosAluno', 'inativarAluno',
   // Avaliações escolares (fac-símile EM)
   'cadastrarAvaliacoes', 'listarAvaliacoesAluno', 'atualizarAvaliacao', 'deletarAvaliacao',
   // Mentor — listagem e leitura de alunos
@@ -84,6 +84,7 @@ function chavesParaInvalidar(acaoEscrita, dados) {
     case 'diagnostico':
     case 'designarMentor':
     case 'atualizarDadosAluno':
+    case 'inativarAluno':
       return ['listaAlunosMentor|*', 'dashboardLider|*'];
     case 'cadastrarAvaliacoes':
     case 'atualizarAvaliacao':

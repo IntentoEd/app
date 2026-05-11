@@ -193,6 +193,40 @@ export default function PainelLider() {
     return (dados?.alunos || []).filter(a => !a.mentor || !a.mentorAtivo);
   }, [dados]);
 
+  // Pendências de diagnóstico — alunos em "Aguardando Diagnóstico" (não estão em alunos[]
+  // porque o handleDashboardLider só lista quem já tem onboarding completo).
+  // Líder vê aqui pra designar mentor (se não tem) ou cobrar diagnóstico do aluno.
+  const pendenciasDiagnostico = useMemo(() => dados?.pendencias || [], [dados]);
+
+  // Inativar aluno (líder marca como saiu da mentoria)
+  const [inativando, setInativando] = useState(null); // idAluno em loading
+  const inativarAluno = async (aluno) => {
+    if (!confirm(`Marcar ${aluno.nome} como INATIVO? Ele some do painel do líder e da lista do mentor. Reversível pelo Sheets (limpar célula dt_saida).`)) return;
+    setInativando(aluno.idAluno);
+    try {
+      const r = await apiFetch('/api/mentor', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ acao: 'inativarAluno', idAluno: aluno.idAluno }),
+      });
+      const data = await r.json();
+      if (data.status === 'sucesso') {
+        // Remove localmente das duas listas pra UX imediata; refetch confirma no próximo load
+        setDados(prev => prev ? {
+          ...prev,
+          alunos: (prev.alunos || []).filter(a => a.idAluno !== aluno.idAluno),
+          pendencias: (prev.pendencias || []).filter(a => a.idAluno !== aluno.idAluno),
+        } : prev);
+      } else {
+        alert('Erro: ' + (data.mensagem || 'falha ao inativar'));
+      }
+    } catch (e) {
+      alert('Erro de conexão ao inativar.');
+    } finally {
+      setInativando(null);
+    }
+  };
+
   const haFiltroAtivo = mentoresSelecionados.length > 0 || busca.trim().length > 0 || !!tipoAlunoFiltro;
 
   // Quando há filtro, recalcula o agregado da Visão Analítica a partir das
@@ -525,6 +559,57 @@ export default function PainelLider() {
             )}
           </div>
         </div>
+
+        {/* Pendências de diagnóstico — alunos em "Aguardando Diagnóstico" */}
+        {pendenciasDiagnostico.length > 0 && (
+          <div className="bg-blue-50 border-2 border-blue-200 rounded-xl p-5 shadow-sm">
+            <div className="flex items-center justify-between mb-3 gap-3">
+              <div className="flex items-center gap-2">
+                <svg className="w-5 h-5 text-blue-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
+                <h2 className="text-sm font-bold text-blue-800">Pendências de diagnóstico</h2>
+                <span className="bg-blue-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">{pendenciasDiagnostico.length}</span>
+              </div>
+            </div>
+            <p className="text-xs text-blue-700/80 font-medium mb-4">Alunos que fizeram onboarding mas ainda não fizeram o diagnóstico teórico. Designe mentor (se faltar) e/ou cobre o diagnóstico.</p>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+              {pendenciasDiagnostico.map(a => (
+                <div key={a.idAluno} className="bg-white border border-blue-200 rounded-lg p-3 flex flex-col gap-2">
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-semibold text-slate-700 truncate">{a.nome}</p>
+                    <p className="text-[11px] text-slate-400 font-medium truncate">{a.email}</p>
+                    {a.mentor && a.mentorAtivo && (
+                      <p className="text-[10px] text-slate-500 font-medium mt-0.5 truncate">mentor: {a.mentorNome || a.mentor}</p>
+                    )}
+                    {a.mentor && !a.mentorAtivo && (
+                      <p className="text-[10px] text-amber-600 font-medium mt-0.5 truncate">mentor inativo: {a.mentor}</p>
+                    )}
+                    {!a.mentor && (
+                      <p className="text-[10px] text-blue-700 font-medium mt-0.5">sem mentor designado</p>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2 justify-end">
+                    {(!a.mentor || !a.mentorAtivo) && (
+                      <button
+                        onClick={() => abrirDesignacao(a)}
+                        className="text-[11px] font-semibold bg-intento-yellow text-white px-3 py-1.5 rounded-lg hover:bg-yellow-500 transition shrink-0"
+                      >
+                        Designar
+                      </button>
+                    )}
+                    <button
+                      onClick={() => inativarAluno(a)}
+                      disabled={inativando === a.idAluno}
+                      className="text-[11px] font-semibold text-red-600 hover:text-red-700 hover:bg-red-50 px-2 py-1.5 rounded transition disabled:opacity-50"
+                      title="Marcar como inativo"
+                    >
+                      {inativando === a.idAluno ? '...' : 'Inativar'}
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Aguardando Designação — destaque pra alunos sem mentor */}
         {alunosAguardando.length > 0 && (
@@ -955,6 +1040,14 @@ export default function PainelLider() {
                             title="Editar tipo, fase, escola, turma"
                           >
                             Editar
+                          </button>
+                          <button
+                            onClick={() => inativarAluno(a)}
+                            disabled={inativando === a.idAluno}
+                            className="text-[11px] font-semibold text-red-500 hover:text-red-700 transition disabled:opacity-50"
+                            title="Marcar como inativo (saiu da mentoria)"
+                          >
+                            {inativando === a.idAluno ? '...' : 'Inativar'}
                           </button>
                           <button
                             onClick={() => window.open(`/mentor/${a.idAluno}?nome=${encodeURIComponent(a.nome)}`, '_blank')}
