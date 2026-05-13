@@ -539,6 +539,20 @@ const parseMetas = (raw) => {
 const serializeMetas = (metasArr) =>
   (metasArr || []).map(m => String(m || '').trim()).filter(Boolean).join('\n');
 
+const STATUS_META_OPCOES = ['Batida', 'Parcial', 'Não batida'];
+const COR_STATUS_META = {
+  'Batida':     'bg-emerald-100 text-emerald-800',
+  'Parcial':    'bg-yellow-100 text-yellow-800',
+  'Não batida': 'bg-red-100 text-red-800',
+};
+const parseStatusMetas = (raw) => {
+  // serializado com \n mantendo posição (vazios preservados)
+  const arr = String(raw || '').split('\n');
+  return Array.from({ length: MAX_METAS }, (_, i) => arr[i] || '');
+};
+const serializeStatusMetas = (statusArr) =>
+  (statusArr || []).slice(0, MAX_METAS).map(s => String(s || '').trim()).join('\n');
+
 // COMPONENTE: Estrelas de Avaliação
 const StarRating = ({ rating, setRating, readOnly = false, small = false }) => {
   return (
@@ -599,7 +613,8 @@ export default function GestaoIndividualAluno() {
 
   const [formDiario, setFormDiario] = useState({
     autoavaliacao: 0, vitorias: "", desafios: "", categoriaDesafio: "Codificação",
-    metas: ["", "", ""], exploracao: "", planosAcao: ["", "", "", "", ""], notasPrivadas: ""
+    metas: ["", "", ""], exploracao: "", planosAcao: ["", "", "", "", ""], notasPrivadas: "",
+    statusMetasAnteriores: ["", "", ""]
   });
 
   const [grade, setGrade] = useState({});
@@ -677,6 +692,7 @@ export default function GestaoIndividualAluno() {
           const diariosCarregados = (data.diarios || []).map(d => ({
             ...d,
             metas: parseMetas(d.meta),
+            statusMetasAnteriores: parseStatusMetas(d.statusMetasAnteriores),
           }));
           setHistoricoDiarios(diariosCarregados);
 
@@ -741,7 +757,12 @@ export default function GestaoIndividualAluno() {
       const res = await apiFetch('/api/mentor', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ acao: 'salvarNovoEncontro', idPlanilha: params.id, ...formDiario, meta: serializeMetas(formDiario.metas), autoavaliacao: formDiario.autoavaliacao, acoes: formDiario.planosAcao })
+        body: JSON.stringify({
+          acao: 'salvarNovoEncontro', idPlanilha: params.id, ...formDiario,
+          meta: serializeMetas(formDiario.metas),
+          statusMetasAnteriores: serializeStatusMetas(formDiario.statusMetasAnteriores),
+          autoavaliacao: formDiario.autoavaliacao, acoes: formDiario.planosAcao
+        })
       });
       if (res.ok) {
         setStatusMsg("Encontro Salvo!");
@@ -768,6 +789,9 @@ export default function GestaoIndividualAluno() {
       acoes: [0,1,2,3,4].map(i => enc.acoes?.[i] || ''),
       resultados: [0,1,2,3,4].map(i => enc.resultados?.[i] || ''),
       notasPrivadas: enc.notasPrivadas || '',
+      statusMetasAnteriores: Array.isArray(enc.statusMetasAnteriores)
+        ? [0,1,2].map(i => enc.statusMetasAnteriores[i] || '')
+        : parseStatusMetas(enc.statusMetasAnteriores),
     });
   };
 
@@ -776,10 +800,15 @@ export default function GestaoIndividualAluno() {
     setSalvandoEdicao(true);
     try {
       const metaSerializada = serializeMetas(encontroEdit.metas);
+      const statusSerializado = serializeStatusMetas(encontroEdit.statusMetasAnteriores);
       const res = await apiFetch('/api/mentor', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ acao: 'editarEncontro', idPlanilha: params.id, ...encontroEdit, meta: metaSerializada }),
+        body: JSON.stringify({
+          acao: 'editarEncontro', idPlanilha: params.id, ...encontroEdit,
+          meta: metaSerializada,
+          statusMetasAnteriores: statusSerializado,
+        }),
       });
       const data = await res.json();
       if (data.status === 'sucesso') {
@@ -796,6 +825,7 @@ export default function GestaoIndividualAluno() {
           acoes: [...encontroEdit.acoes],
           resultados: [...encontroEdit.resultados],
           notasPrivadas: encontroEdit.notasPrivadas,
+          statusMetasAnteriores: [...encontroEdit.statusMetasAnteriores],
         } : e));
         setEncontroEdit(null);
       } else {
@@ -1007,6 +1037,22 @@ export default function GestaoIndividualAluno() {
                   {historicoDiarios.map((enc, i) => {
                     const expandido = expandidoId === i;
                     const toggleExpand = () => setExpandidoId(expandido ? null : i);
+                    // Encontro N+1 cronológico (mais novo). No array em ordem reverse, é o de índice i-1.
+                    const proximoEnc = i > 0 ? historicoDiarios[i - 1] : null;
+                    const statusDasMetas = proximoEnc?.statusMetasAnteriores || ['', '', ''];
+                    const metasComStatus = (enc.metas || []).map((m, idx) => ({
+                      meta: m, status: statusDasMetas[idx] || ''
+                    })).filter(x => String(x.meta || '').trim() !== '');
+                    const totalMetas = metasComStatus.length;
+                    const totalAvaliadas = metasComStatus.filter(x => x.status !== '').length;
+                    const totalBatidas = metasComStatus.filter(x => x.status === 'Batida').length;
+                    const temAvaliacao = totalAvaliadas > 0;
+                    const corBadgeStatus = (() => {
+                      if (totalAvaliadas < totalMetas) return 'bg-slate-100 text-slate-600 border-slate-200';
+                      if (totalBatidas === totalMetas) return 'bg-emerald-100 text-emerald-800 border-emerald-200';
+                      if (totalBatidas === 0)          return 'bg-red-100 text-red-800 border-red-200';
+                      return 'bg-yellow-100 text-yellow-800 border-yellow-200';
+                    })();
                     return (
                     <div key={i} className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden transition-all">
                       {/* CABEÇALHO DA SANFONA */}
@@ -1045,11 +1091,17 @@ export default function GestaoIndividualAluno() {
                               <span className="text-[10px] text-slate-400 font-medium">Autoav.:</span>
                               <StarRating rating={parseInt(enc.autoavaliacao) || 0} readOnly={true} small={true} />
                             </div>
-                            {/* Quantidade de metas */}
-                            {(enc.metas || []).filter(m => String(m || '').trim() !== '').length > 0 && (
-                              <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full border bg-amber-50 text-amber-700 border-amber-200">
-                                {(enc.metas || []).filter(m => String(m || '').trim() !== '').length} {((enc.metas || []).filter(m => String(m || '').trim() !== '').length === 1) ? 'meta' : 'metas'}
-                              </span>
+                            {/* Status / quantidade de metas */}
+                            {totalMetas > 0 && (
+                              temAvaliacao ? (
+                                <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full border ${corBadgeStatus}`}>
+                                  {totalBatidas}/{totalMetas} {totalBatidas === 1 ? 'batida' : 'batidas'}
+                                </span>
+                              ) : (
+                                <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full border bg-amber-50 text-amber-700 border-amber-200">
+                                  {totalMetas} {totalMetas === 1 ? 'meta' : 'metas'}
+                                </span>
+                              )
                             )}
                           </div>
                         </div>
@@ -1099,22 +1151,29 @@ export default function GestaoIndividualAluno() {
                               <svg className="w-4 h-4 text-intento-blue" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z"/></svg>
                               <h4 className={labelClass + " mb-0"}>Metas para o Próximo Encontro</h4>
                             </div>
-                            {(() => {
-                              const metasFiltradas = (enc.metas || []).filter(m => String(m || '').trim() !== '');
-                              if (metasFiltradas.length === 0) {
-                                return <p className="text-sm text-slate-400 font-medium italic">Nenhuma meta registrada.</p>;
-                              }
-                              return (
-                                <ul className="space-y-2">
-                                  {metasFiltradas.map((m, idx) => (
+                            {totalMetas === 0 ? (
+                              <p className="text-sm text-slate-400 font-medium italic">Nenhuma meta registrada.</p>
+                            ) : (
+                              <ul className="space-y-2">
+                                {(enc.metas || []).map((m, idx) => {
+                                  if (!m || String(m).trim() === '') return null;
+                                  const status = statusDasMetas[idx] || '';
+                                  return (
                                     <li key={idx} className="flex gap-3 items-start">
                                       <span className="w-6 h-6 shrink-0 bg-intento-blue/10 text-intento-blue rounded-md flex items-center justify-center text-xs font-bold">{idx + 1}</span>
-                                      <span className="text-sm font-semibold text-slate-800 whitespace-pre-wrap leading-relaxed">{m}</span>
+                                      <span className="text-sm font-semibold text-slate-800 whitespace-pre-wrap leading-relaxed flex-1">{m}</span>
+                                      {proximoEnc && (
+                                        <span className={`text-[10px] font-medium px-3 py-1.5 rounded-md uppercase tracking-wide whitespace-nowrap ${
+                                          status ? COR_STATUS_META[status] : 'bg-slate-100 text-slate-500'
+                                        }`}>
+                                          {status || 'Sem avaliação'}
+                                        </span>
+                                      )}
                                     </li>
-                                  ))}
-                                </ul>
-                              );
-                            })()}
+                                  );
+                                })}
+                              </ul>
+                            )}
                           </div>
 
                           {/* Grid de Vitórias e Desafios */}
@@ -1191,8 +1250,60 @@ export default function GestaoIndividualAluno() {
 
               {/* Corpo do Modal com Scroll */}
               <div className="flex-1 overflow-y-auto p-8 custom-scrollbar">
+
+                {/* RETROSPECTIVA: status das metas do último encontro */}
+                {(() => {
+                  const ultimo = historicoDiarios[0];
+                  if (!ultimo) return null;
+                  const metasAnteriores = (ultimo.metas || [])
+                    .map((m, idx) => ({ idx, meta: m }))
+                    .filter(x => String(x.meta || '').trim() !== '');
+                  if (metasAnteriores.length === 0) return null;
+                  return (
+                    <div className="bg-intento-blue/5 border-2 border-intento-blue/20 rounded-xl p-6 mb-8">
+                      <h3 className="text-sm font-bold text-intento-blue uppercase tracking-wider mb-1">Retrospectiva — Metas do último encontro</h3>
+                      <p className="text-xs text-slate-500 mb-4">
+                        {ultimo.data ? new Date(ultimo.data).toLocaleDateString('pt-BR') : ''} · marque o status de cada meta
+                      </p>
+                      <div className="space-y-3">
+                        {metasAnteriores.map(({ idx, meta }) => (
+                          <div key={idx} className="bg-white border border-slate-200 rounded-lg p-4 flex flex-col md:flex-row gap-3 md:items-center">
+                            <div className="flex gap-2 items-start flex-1">
+                              <span className="w-6 h-6 shrink-0 bg-intento-blue/10 text-intento-blue rounded-md flex items-center justify-center text-xs font-bold">{idx + 1}</span>
+                              <span className="text-sm font-semibold text-slate-800 leading-relaxed">{meta}</span>
+                            </div>
+                            <div className="flex gap-1 flex-wrap">
+                              {STATUS_META_OPCOES.map(opt => {
+                                const ativo = formDiario.statusMetasAnteriores[idx] === opt;
+                                return (
+                                  <button
+                                    key={opt}
+                                    type="button"
+                                    onClick={() => {
+                                      const novo = [...formDiario.statusMetasAnteriores];
+                                      novo[idx] = ativo ? '' : opt;
+                                      setFormDiario({ ...formDiario, statusMetasAnteriores: novo });
+                                    }}
+                                    className={`text-[10px] font-bold px-3 py-1.5 rounded-md uppercase tracking-wide transition-all ${
+                                      ativo
+                                        ? COR_STATUS_META[opt] + ' ring-2 ring-offset-1 ring-intento-blue/40'
+                                        : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
+                                    }`}
+                                  >
+                                    {opt}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })()}
+
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                  
+
                   {/* COLUNA ESQUERDA: Análise e Exploração */}
                   <div className="space-y-6">
                     <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
@@ -1301,6 +1412,59 @@ export default function GestaoIndividualAluno() {
               </div>
 
               <div className="flex-1 overflow-y-auto p-8 custom-scrollbar">
+
+                {/* RETROSPECTIVA: status das metas do encontro anterior */}
+                {(() => {
+                  const idxAtual = historicoDiarios.findIndex(d => d.linha === encontroEdit.linha);
+                  const anteriorCronologico = idxAtual >= 0 ? historicoDiarios[idxAtual + 1] : null;
+                  if (!anteriorCronologico) return null;
+                  const metasAnteriores = (anteriorCronologico.metas || [])
+                    .map((m, idx) => ({ idx, meta: m }))
+                    .filter(x => String(x.meta || '').trim() !== '');
+                  if (metasAnteriores.length === 0) return null;
+                  return (
+                    <div className="bg-intento-blue/5 border-2 border-intento-blue/20 rounded-xl p-6 mb-8">
+                      <h3 className="text-sm font-bold text-intento-blue uppercase tracking-wider mb-1">Retrospectiva — Metas do encontro anterior</h3>
+                      <p className="text-xs text-slate-500 mb-4">
+                        {anteriorCronologico.data ? new Date(anteriorCronologico.data).toLocaleDateString('pt-BR') : ''} · status gravado neste encontro
+                      </p>
+                      <div className="space-y-3">
+                        {metasAnteriores.map(({ idx, meta }) => (
+                          <div key={idx} className="bg-white border border-slate-200 rounded-lg p-4 flex flex-col md:flex-row gap-3 md:items-center">
+                            <div className="flex gap-2 items-start flex-1">
+                              <span className="w-6 h-6 shrink-0 bg-intento-blue/10 text-intento-blue rounded-md flex items-center justify-center text-xs font-bold">{idx + 1}</span>
+                              <span className="text-sm font-semibold text-slate-800 leading-relaxed">{meta}</span>
+                            </div>
+                            <div className="flex gap-1 flex-wrap">
+                              {STATUS_META_OPCOES.map(opt => {
+                                const ativo = encontroEdit.statusMetasAnteriores[idx] === opt;
+                                return (
+                                  <button
+                                    key={opt}
+                                    type="button"
+                                    onClick={() => {
+                                      const novo = [...encontroEdit.statusMetasAnteriores];
+                                      novo[idx] = ativo ? '' : opt;
+                                      setEncontroEdit({ ...encontroEdit, statusMetasAnteriores: novo });
+                                    }}
+                                    className={`text-[10px] font-bold px-3 py-1.5 rounded-md uppercase tracking-wide transition-all ${
+                                      ativo
+                                        ? COR_STATUS_META[opt] + ' ring-2 ring-offset-1 ring-intento-blue/40'
+                                        : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
+                                    }`}
+                                  >
+                                    {opt}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })()}
+
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
 
                   <div className="space-y-6">

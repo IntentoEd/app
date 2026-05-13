@@ -143,8 +143,16 @@ const COL_ENC = {
   META: 5, EXPLORACAO: 6,
   ACAO_1: 7, ACAO_2: 8, ACAO_3: 9, ACAO_4: 10, ACAO_5: 11,
   RESULTADO_1: 12, RESULTADO_2: 13, RESULTADO_3: 14, RESULTADO_4: 15, RESULTADO_5: 16,
-  NOTAS_PRIVADAS: 17  // ⚠️ Campo privado do mentor — NÃO incluir em obterDadosDoPainel
+  NOTAS_PRIVADAS: 17,  // ⚠️ Campo privado do mentor — NÃO incluir em obterDadosDoPainel
+  STATUS_METAS_ANTERIORES: 18  // Status (Batida/Parcial/Não batida) das metas do encontro anterior. String \n-separated.
 };
+const COL_ENC_TOTAL = 19;
+
+function _garantirColunasEnc(abaDiario) {
+  if (abaDiario.getMaxColumns() < COL_ENC_TOTAL) {
+    abaDiario.insertColumnsAfter(abaDiario.getMaxColumns(), COL_ENC_TOTAL - abaDiario.getMaxColumns());
+  }
+}
 
 const COL_SIM = {
   ID: 0, STATUS: 1, DATA: 2, ESPECIFICACAO: 3,
@@ -1001,11 +1009,12 @@ function handleEditarEncontro(dados) {
     _exigirAcessoAluno(dados.email, idPlanilha);
     const abaDiario  = SpreadsheetApp.openById(idPlanilha).getSheetByName(ABA.ENCONTROS);
     if (!abaDiario) throw new Error("Aba '" + ABA.ENCONTROS + "' não encontrada.");
+    _garantirColunasEnc(abaDiario);
     const linha = parseInt(dados.linha);
     if (!linha || linha < 2) throw new Error("Linha inválida.");
     const acoes      = Array.isArray(dados.acoes) ? dados.acoes : [];
     const resultados = Array.isArray(dados.resultados) ? dados.resultados : [];
-    abaDiario.getRange(linha, 1, 1, 18).setValues([[
+    abaDiario.getRange(linha, 1, 1, COL_ENC_TOTAL).setValues([[
       txt(dados.data),
       txt(dados.autoavaliacao),
       txt(dados.vitorias),
@@ -1015,7 +1024,8 @@ function handleEditarEncontro(dados) {
       txt(dados.exploracao),
       txt(acoes[0]), txt(acoes[1]), txt(acoes[2]), txt(acoes[3]), txt(acoes[4]),
       txt(resultados[0]), txt(resultados[1]), txt(resultados[2]), txt(resultados[3]), txt(resultados[4]),
-      txt(dados.notasPrivadas)
+      txt(dados.notasPrivadas),
+      txt(dados.statusMetasAnteriores)
     ]]);
     return responderJSON({ status: "sucesso" });
   } catch (e) { return responderJSON({ status: "erro", mensagem: e.message }); }
@@ -1030,6 +1040,7 @@ function handleSalvarNovoEncontro(dados) {
     _exigirAcessoAluno(dados.email, idPlanilha);
     const abaDiario  = SpreadsheetApp.openById(idPlanilha).getSheetByName(ABA.ENCONTROS);
     if (!abaDiario) throw new Error("Aba '" + ABA.ENCONTROS + "' não encontrada.");
+    _garantirColunasEnc(abaDiario);
     const dataHoje = Utilities.formatDate(new Date(), "GMT-3", "dd/MM/yyyy");
     const acoes    = Array.isArray(dados.acoes) ? dados.acoes : [];
     abaDiario.appendRow([
@@ -1037,7 +1048,8 @@ function handleSalvarNovoEncontro(dados) {
       txt(dados.categoria), txt(dados.meta), txt(dados.exploracao),
       txt(acoes[0]), txt(acoes[1]), txt(acoes[2]), txt(acoes[3]), txt(acoes[4]),
       '', '', '', '', '',  // resultados (preenchidos depois via avaliarEncontroPassado)
-      txt(dados.notasPrivadas)
+      txt(dados.notasPrivadas),
+      txt(dados.statusMetasAnteriores)
     ]);
     atualizarCacheMestre(idPlanilha, { ULTIMO_ENCONTRO: dataHoje });
     return responderJSON({ status: "sucesso" });
@@ -1402,7 +1414,8 @@ function handleBuscarDadosAluno(dados) {
             meta: matriz[i][COL_ENC.META], exploracao: matriz[i][COL_ENC.EXPLORACAO],
             acoes: [matriz[i][COL_ENC.ACAO_1], matriz[i][COL_ENC.ACAO_2], matriz[i][COL_ENC.ACAO_3], matriz[i][COL_ENC.ACAO_4], matriz[i][COL_ENC.ACAO_5]],
             resultados: [matriz[i][COL_ENC.RESULTADO_1], matriz[i][COL_ENC.RESULTADO_2], matriz[i][COL_ENC.RESULTADO_3], matriz[i][COL_ENC.RESULTADO_4], matriz[i][COL_ENC.RESULTADO_5]],
-            notasPrivadas: txt(matriz[i][COL_ENC.NOTAS_PRIVADAS])
+            notasPrivadas: txt(matriz[i][COL_ENC.NOTAS_PRIVADAS]),
+            statusMetasAnteriores: txt(matriz[i][COL_ENC.STATUS_METAS_ANTERIORES])
           });
         }
       }
