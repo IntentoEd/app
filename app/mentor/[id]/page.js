@@ -531,6 +531,14 @@ const TEMPLATES = [
 // As opções restritas para o Diário
 const CATEGORIAS_DESAFIO = ['Codificação', 'Revisão', 'Hábitos', 'Prova'];
 
+const MAX_METAS = 3;
+const parseMetas = (raw) => {
+  const arr = String(raw || '').split('\n').map(s => s.trim());
+  return Array.from({ length: MAX_METAS }, (_, i) => arr[i] || '');
+};
+const serializeMetas = (metasArr) =>
+  (metasArr || []).map(m => String(m || '').trim()).filter(Boolean).join('\n');
+
 // COMPONENTE: Estrelas de Avaliação
 const StarRating = ({ rating, setRating, readOnly = false, small = false }) => {
   return (
@@ -583,7 +591,7 @@ export default function GestaoIndividualAluno() {
   
   // O Estado do Modal
   const [modalAberto, setModalAberto] = useState(false);
-  const [metaPassada, setMetaPassada] = useState("");
+  const [metasPassadas, setMetasPassadas] = useState(["", "", ""]);
 
   // Edição de encontro do diário
   const [encontroEdit, setEncontroEdit] = useState(null);
@@ -591,7 +599,7 @@ export default function GestaoIndividualAluno() {
 
   const [formDiario, setFormDiario] = useState({
     autoavaliacao: 0, vitorias: "", desafios: "", categoriaDesafio: "Codificação",
-    meta: "", exploracao: "", planosAcao: ["", "", "", "", ""], notasPrivadas: ""
+    metas: ["", "", ""], exploracao: "", planosAcao: ["", "", "", "", ""], notasPrivadas: ""
   });
 
   const [grade, setGrade] = useState({});
@@ -666,12 +674,15 @@ export default function GestaoIndividualAluno() {
           setDadosSimulados(data.simulados || { kpi: null, hist: null, lista: [] });
 
           // DIÁRIOS
-          const diariosCarregados = data.diarios || [];
+          const diariosCarregados = (data.diarios || []).map(d => ({
+            ...d,
+            metas: parseMetas(d.meta),
+          }));
           setHistoricoDiarios(diariosCarregados);
 
           if (diariosCarregados.length > 0) {
             const ultimo = diariosCarregados[0];
-            setMetaPassada(ultimo.meta || ""); // Puxa a meta antiga para o Placeholder
+            setMetasPassadas(parseMetas(ultimo.meta)); // Puxa as metas antigas para os Placeholders
             
             let precisaAvaliar = false;
             for (let i = 0; i < 5; i++) {
@@ -730,7 +741,7 @@ export default function GestaoIndividualAluno() {
       const res = await apiFetch('/api/mentor', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ acao: 'salvarNovoEncontro', idPlanilha: params.id, ...formDiario, autoavaliacao: formDiario.autoavaliacao, acoes: formDiario.planosAcao })
+        body: JSON.stringify({ acao: 'salvarNovoEncontro', idPlanilha: params.id, ...formDiario, meta: serializeMetas(formDiario.metas), autoavaliacao: formDiario.autoavaliacao, acoes: formDiario.planosAcao })
       });
       if (res.ok) {
         setStatusMsg("Encontro Salvo!");
@@ -752,7 +763,7 @@ export default function GestaoIndividualAluno() {
       vitorias: enc.vitorias || '',
       desafios: enc.desafios || '',
       categoria: enc.categoria || 'Codificação',
-      meta: enc.meta || '',
+      metas: parseMetas(enc.meta),
       exploracao: enc.exploracao || '',
       acoes: [0,1,2,3,4].map(i => enc.acoes?.[i] || ''),
       resultados: [0,1,2,3,4].map(i => enc.resultados?.[i] || ''),
@@ -764,10 +775,11 @@ export default function GestaoIndividualAluno() {
     if (salvandoEdicao || !encontroEdit) return;
     setSalvandoEdicao(true);
     try {
+      const metaSerializada = serializeMetas(encontroEdit.metas);
       const res = await apiFetch('/api/mentor', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ acao: 'editarEncontro', idPlanilha: params.id, ...encontroEdit }),
+        body: JSON.stringify({ acao: 'editarEncontro', idPlanilha: params.id, ...encontroEdit, meta: metaSerializada }),
       });
       const data = await res.json();
       if (data.status === 'sucesso') {
@@ -778,7 +790,8 @@ export default function GestaoIndividualAluno() {
           vitorias: encontroEdit.vitorias,
           desafios: encontroEdit.desafios,
           categoria: encontroEdit.categoria,
-          meta: encontroEdit.meta,
+          meta: metaSerializada,
+          metas: [...encontroEdit.metas],
           exploracao: encontroEdit.exploracao,
           acoes: [...encontroEdit.acoes],
           resultados: [...encontroEdit.resultados],
@@ -1010,12 +1023,9 @@ export default function GestaoIndividualAluno() {
                           {new Date(enc.data).toLocaleDateString('pt-BR')}
                         </span>
 
-                        {/* Meta + badges */}
+                        {/* Badges (categoria + autoavaliação) */}
                         <div className="flex-1 min-w-0">
-                          <p className="font-semibold text-slate-700 text-sm truncate leading-snug">
-                            {enc.meta || 'Sem meta registrada'}
-                          </p>
-                          <div className="flex items-center flex-wrap gap-2 mt-1.5">
+                          <div className="flex items-center flex-wrap gap-2">
                             {/* Tipo de desafio */}
                             {enc.categoria && (() => {
                               const cat = {
@@ -1035,6 +1045,12 @@ export default function GestaoIndividualAluno() {
                               <span className="text-[10px] text-slate-400 font-medium">Autoav.:</span>
                               <StarRating rating={parseInt(enc.autoavaliacao) || 0} readOnly={true} small={true} />
                             </div>
+                            {/* Quantidade de metas */}
+                            {(enc.metas || []).filter(m => String(m || '').trim() !== '').length > 0 && (
+                              <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full border bg-amber-50 text-amber-700 border-amber-200">
+                                {(enc.metas || []).filter(m => String(m || '').trim() !== '').length} {((enc.metas || []).filter(m => String(m || '').trim() !== '').length === 1) ? 'meta' : 'metas'}
+                              </span>
+                            )}
                           </div>
                         </div>
 
@@ -1075,6 +1091,30 @@ export default function GestaoIndividualAluno() {
                             <span className="bg-blue-100 text-blue-800 text-xs font-bold px-3 py-1 rounded-full uppercase tracking-wider">
                               Desafio: {enc.categoria || 'Não Categorizado'}
                             </span>
+                          </div>
+
+                          {/* Metas para o Próximo Encontro */}
+                          <div className="bg-white p-5 rounded-xl border border-slate-100">
+                            <div className="flex items-center gap-2 mb-3">
+                              <svg className="w-4 h-4 text-intento-blue" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z"/></svg>
+                              <h4 className={labelClass + " mb-0"}>Metas para o Próximo Encontro</h4>
+                            </div>
+                            {(() => {
+                              const metasFiltradas = (enc.metas || []).filter(m => String(m || '').trim() !== '');
+                              if (metasFiltradas.length === 0) {
+                                return <p className="text-sm text-slate-400 font-medium italic">Nenhuma meta registrada.</p>;
+                              }
+                              return (
+                                <ul className="space-y-2">
+                                  {metasFiltradas.map((m, idx) => (
+                                    <li key={idx} className="flex gap-3 items-start">
+                                      <span className="w-6 h-6 shrink-0 bg-intento-blue/10 text-intento-blue rounded-md flex items-center justify-center text-xs font-bold">{idx + 1}</span>
+                                      <span className="text-sm font-semibold text-slate-800 whitespace-pre-wrap leading-relaxed">{m}</span>
+                                    </li>
+                                  ))}
+                                </ul>
+                              );
+                            })()}
                           </div>
 
                           {/* Grid de Vitórias e Desafios */}
@@ -1195,13 +1235,26 @@ export default function GestaoIndividualAluno() {
                         </select>
                       </div>
                       <div>
-                        <label className={labelClass}>Meta para o Próximo Encontro</label>
-                        <input 
-                          type="text" className={inputClass} 
-                          placeholder={metaPassada ? `Ex: ${metaPassada}` : "Qual a grande meta da semana?"} 
-                          value={formDiario.meta} 
-                          onChange={e => setFormDiario({...formDiario, meta: e.target.value})} 
-                        />
+                        <label className={labelClass}>Metas para o Próximo Encontro</label>
+                        <p className="text-[10px] text-slate-400 font-medium mb-2 -mt-1">Até 3 metas. Deixe em branco o que não usar.</p>
+                        <div className="space-y-2">
+                          {[0,1,2].map(idx => (
+                            <div key={idx} className="flex gap-2 items-center">
+                              <div className="w-7 h-7 shrink-0 bg-intento-blue/10 text-intento-blue rounded-md flex items-center justify-center text-xs font-bold">{idx + 1}</div>
+                              <input
+                                type="text"
+                                className={inputClass}
+                                placeholder={metasPassadas[idx] ? `Ex: ${metasPassadas[idx]}` : (idx === 0 ? "Qual a grande meta da semana?" : "Meta opcional")}
+                                value={formDiario.metas[idx]}
+                                onChange={e => {
+                                  const novas = [...formDiario.metas];
+                                  novas[idx] = e.target.value;
+                                  setFormDiario({...formDiario, metas: novas});
+                                }}
+                              />
+                            </div>
+                          ))}
+                        </div>
                       </div>
                     </div>
 
@@ -1295,8 +1348,26 @@ export default function GestaoIndividualAluno() {
                         </select>
                       </div>
                       <div>
-                        <label className={labelClass}>Meta para o Próximo Encontro</label>
-                        <input type="text" className={inputClass} value={encontroEdit.meta} onChange={e => setEncontroEdit({...encontroEdit, meta: e.target.value})} />
+                        <label className={labelClass}>Metas para o Próximo Encontro</label>
+                        <p className="text-[10px] text-slate-400 font-medium mb-2 -mt-1">Até 3 metas.</p>
+                        <div className="space-y-2">
+                          {[0,1,2].map(idx => (
+                            <div key={idx} className="flex gap-2 items-center">
+                              <div className="w-7 h-7 shrink-0 bg-intento-blue/10 text-intento-blue rounded-md flex items-center justify-center text-xs font-bold">{idx + 1}</div>
+                              <input
+                                type="text"
+                                className={inputClass}
+                                placeholder={idx === 0 ? "Meta principal" : "Meta opcional"}
+                                value={encontroEdit.metas[idx]}
+                                onChange={e => {
+                                  const novas = [...encontroEdit.metas];
+                                  novas[idx] = e.target.value;
+                                  setEncontroEdit({...encontroEdit, metas: novas});
+                                }}
+                              />
+                            </div>
+                          ))}
+                        </div>
                       </div>
                     </div>
 

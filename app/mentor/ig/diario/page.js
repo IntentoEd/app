@@ -209,15 +209,32 @@ function ExportarDiario() {
                 </div>
               )}
 
-              {/* Meta */}
-              {encontro.meta && (
-                <div style={{ background: '#fff7ed', border: '1px solid #fed7aa', borderLeft: '4px solid #D4B726', borderRadius: 12, padding: 14 }}>
-                  {secaoLabel('Meta para o Próximo Encontro')}
-                  <p style={{ fontSize: 13, color: '#1e293b', fontWeight: 600, lineHeight: 1.4 }}>
-                    {encontro.meta}
-                  </p>
-                </div>
-              )}
+              {/* Metas */}
+              {(() => {
+                const metasArr = String(encontro.meta || '').split('\n').map(s => s.trim()).filter(Boolean);
+                if (metasArr.length === 0) return null;
+                return (
+                  <div style={{ background: '#fff7ed', border: '1px solid #fed7aa', borderLeft: '4px solid #D4B726', borderRadius: 12, padding: 14 }}>
+                    {secaoLabel(metasArr.length === 1 ? 'Meta para o Próximo Encontro' : 'Metas para o Próximo Encontro')}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      {metasArr.map((m, i) => (
+                        <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+                          {metasArr.length > 1 && (
+                            <span style={{
+                              fontSize: 10, fontWeight: 700,
+                              background: '#fde68a', color: '#78350f',
+                              borderRadius: 4, padding: '2px 6px', minWidth: 18, textAlign: 'center', flexShrink: 0,
+                            }}>{i + 1}</span>
+                          )}
+                          <p style={{ fontSize: 13, color: '#1e293b', fontWeight: 600, lineHeight: 1.4, margin: 0 }}>
+                            {m}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
 
               {/* Plano de Ação */}
               {acoesRender.length > 0 && (
