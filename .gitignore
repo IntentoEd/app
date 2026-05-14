@@ -39,3 +39,9 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# GCP credentials (nunca commitar)
+*service-account*.json
+*-credentials.json
+data/samples/
+
