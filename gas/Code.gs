@@ -74,7 +74,17 @@ const COL_MESTRE = {
   NOTA_REDACAO: 19, ID_PLANILHA: 20, MENTOR_RESPONSAVEL: 21, STATUS_ONBOARDING: 22,
   PLANO: 23,
   TIPO_ALUNO: 24, TURMA: 25, ESCOLA: 26, FASE: 27,
-  DT_SAIDA: 28
+  DT_SAIDA: 28,
+  // Status do aluno em relação ao Aplicativo (acordado em reunião pelo mentor).
+  // Define se o cron de integração tenta puxar registro do app pra esse aluno.
+  STATUS_APP: 29
+};
+
+// Valores possíveis de COL_MESTRE.STATUS_APP. Vazio = não definido (tratado como 'Usa').
+const STATUS_APP = {
+  USA: 'Usa',
+  NAO_ADAPTOU: 'Não se adaptou',
+  NUNCA_USARA: 'Nunca vai usar'
 };
 
 const TIPOS_ALUNO = ['ENEM', 'EM'];
@@ -135,7 +145,18 @@ const COL_REG = {
   DOMINIO_TOTAL: 5, PROGRESSO_TOTAL: 6, REVISOES: 7,
   ESTRESSE: 8, ANSIEDADE: 9, MOTIVACAO: 10, SONO: 11,
   DOM_BIO: 12, PROG_BIO: 13, DOM_QUI: 14, PROG_QUI: 15,
-  DOM_FIS: 16, PROG_FIS: 17, DOM_MAT: 18, PROG_MAT: 19
+  DOM_FIS: 16, PROG_FIS: 17, DOM_MAT: 18, PROG_MAT: 19,
+  // Origem da linha: 'auto' (cron do app), 'manual' (mentor digitou),
+  // 'revisado' (mentor conferiu/editou um registro auto). Vazio = legado manual.
+  ORIGEM: 20
+};
+const COL_REG_TOTAL = 21;
+
+// Valores de COL_REG.ORIGEM
+const ORIGEM_REG = {
+  AUTO: 'auto',
+  MANUAL: 'manual',
+  REVISADO: 'revisado'
 };
 
 const COL_ENC = {
@@ -275,6 +296,7 @@ function doPost(e) {
     if (acao === "salvarDiario")            return handleSalvarDiario(dados);
     if (acao === "salvarSemanaLote")        return handleSalvarSemanaLote(dados);
     if (acao === "salvarRegistroGlobal")    return handleSalvarRegistroGlobal(dados);
+    if (acao === "salvarStatusApp")         return handleSalvarStatusApp(dados);
     if (acao === "deletarRegistro")         return handleDeletarRegistro(dados);
     if (acao === "verificarRegistroSemana") return handleVerificarRegistroSemana(dados);
     if (acao === "buscarDadosAluno")        return handleBuscarDadosAluno(dados);
@@ -1274,9 +1296,11 @@ function handleSalvarRegistroGlobal(dados) {
       num(dados.dominioFis),
       num(dados.progressoFis),
       num(dados.dominioMat),
-      num(dados.progressoMat)
+      num(dados.progressoMat),
+      ORIGEM_REG.MANUAL
     ];
 
+    _garantirColunaOrigem(abaDB);
     const colA = abaDB.getRange(1, 1, abaDB.getMaxRows(), 1).getValues();
     let ultimaLinhaComDados = 0;
     for (let i = colA.length - 1; i >= 0; i--) {
