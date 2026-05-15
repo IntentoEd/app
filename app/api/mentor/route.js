@@ -30,7 +30,7 @@ const ACOES_AUTENTICADAS = new Set([
   'listaAlunosMentor', 'buscarDadosAluno', 'buscarOnboarding', 'buscarMetaAnterior',
   // Mentor — escrita de registros/encontros/simulados
   'salvarDiario', 'salvarSemanaLote', 'salvarRegistroGlobal', 'deletarRegistro',
-  'verificarRegistroSemana', 'editarRegistro', 'salvarStatusApp',
+  'verificarRegistroSemana', 'editarRegistro', 'salvarStatusApp', 'registrarExportacao',
   'salvarNovoEncontro', 'avaliarEncontroPassado', 'editarEncontro',
   'salvarSimulado', 'salvarAutopsia',
   // Caderno (aluno/mentor)

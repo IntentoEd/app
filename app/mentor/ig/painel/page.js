@@ -147,6 +147,16 @@ function ExportarAcompanhamento() {
       link.download = `intento-${nomeAluno.replace(/\s+/g, '-')}-semana.png`;
       link.href = canvas.toDataURL('image/png');
       link.click();
+
+      // Registra que o mentor exportou — sinal de "acompanhamento enviado"
+      // (não-bloqueante: erro aqui não atrapalha o download).
+      if (alunoId) {
+        apiFetch('/api/mentor', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ acao: 'registrarExportacao', idAluno: alunoId }),
+        }).catch((e) => console.warn('[painel] registrarExportacao falhou:', e?.message));
+      }
     } finally {
       setExportando(false);
     }

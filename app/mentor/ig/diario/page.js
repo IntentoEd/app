@@ -84,6 +84,16 @@ function ExportarDiario() {
       link.download = `intento-${slug}-diario-${dataSlug}.png`;
       link.href = canvas.toDataURL('image/png');
       link.click();
+
+      // Registra que o mentor exportou — sinal de "acompanhamento enviado"
+      // (não-bloqueante: erro aqui não atrapalha o download).
+      if (idPlanilha) {
+        apiFetch('/api/mentor', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ acao: 'registrarExportacao', idAluno: idPlanilha }),
+        }).catch((e) => console.warn('[diario] registrarExportacao falhou:', e?.message));
+      }
     } finally {
       setExportando(false);
     }

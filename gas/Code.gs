@@ -91,7 +91,10 @@ const TIPOS_ALUNO = ['ENEM', 'EM'];
 
 // Cache_Alunos: cache em aba separada — escrita em writes, leitura em dashboardLider
 const COL_CACHE = {
-  ID_PLANILHA: 0, ULTIMA_DATA_REGISTRO: 1, ULTIMA_SEMANA_REGISTRO: 2, ULTIMO_ENCONTRO: 3
+  ID_PLANILHA: 0, ULTIMA_DATA_REGISTRO: 1, ULTIMA_SEMANA_REGISTRO: 2, ULTIMO_ENCONTRO: 3,
+  // Data ISO do último .png exportado pelo mentor (acompanhamento enviado).
+  // É o sinal de "mentor fez o trabalho da semana".
+  ULTIMA_EXPORTACAO: 4
 };
 
 // Push_Subscriptions: 1 linha por device subscrito
@@ -297,6 +300,7 @@ function doPost(e) {
     if (acao === "salvarSemanaLote")        return handleSalvarSemanaLote(dados);
     if (acao === "salvarRegistroGlobal")    return handleSalvarRegistroGlobal(dados);
     if (acao === "salvarStatusApp")         return handleSalvarStatusApp(dados);
+    if (acao === "registrarExportacao")     return handleRegistrarExportacao(dados);
     if (acao === "deletarRegistro")         return handleDeletarRegistro(dados);
     if (acao === "verificarRegistroSemana") return handleVerificarRegistroSemana(dados);
     if (acao === "buscarDadosAluno")        return handleBuscarDadosAluno(dados);
@@ -974,19 +978,24 @@ function handleListaAlunosMentor(dados) {
 
   const matriz = abaMestre.getDataRange().getValues();
   const colMentor = COL_MESTRE.MENTOR_RESPONSAVEL;
+  const cache = lerCacheTodos();
 
   const listaFiltrada = [];
   for (let i = 1; i < matriz.length; i++) {
     // Mentor não vê alunos inativos (DT_SAIDA preenchida)
     if (matriz[i][COL_MESTRE.DT_SAIDA]) continue;
     if (emailNorm(matriz[i][colMentor]) === emailMentor) {
+      const idPlan = txt(matriz[i][COL_MESTRE.ID_PLANILHA]);
+      const c = cache[idPlan] || {};
       listaFiltrada.push({
         id:     matriz[i][COL_MESTRE.ID_PLANILHA],
         nome:   matriz[i][COL_MESTRE.NOME],
         email:  matriz[i][COL_MESTRE.EMAIL],
         status: txt(matriz[i][COL_MESTRE.STATUS_ONBOARDING]) || "Desconhecido",
         tipoAluno: txt(matriz[i][COL_MESTRE.TIPO_ALUNO]) || "ENEM",
-        statusApp: txt(matriz[i][COL_MESTRE.STATUS_APP]) || ""
+        statusApp: txt(matriz[i][COL_MESTRE.STATUS_APP]) || "",
+        // Data ISO da última exportação .png (sinal de "acompanhamento enviado").
+        ultimaExportacao: c.ultimaExportacao || ""
       });
     }
   }
@@ -1160,8 +1169,9 @@ function atualizarCacheMestre(idPlanilha, updates) {
     }
 
     if (linhaAluno === -1) {
-      // Cria nova linha de cache pra esse aluno
-      const novaLinha = [String(idPlanilha), '', '', ''];
+      // Cria nova linha de cache pra esse aluno (5 colunas: id + 4 timestamps)
+      const novaLinha = ['', '', '', '', ''];
+      novaLinha[COL_CACHE.ID_PLANILHA] = String(idPlanilha);
       Object.keys(updates).forEach(function(chave) {
         const col = COL_CACHE[chave];
         if (typeof col === 'number') novaLinha[col] = updates[chave];
@@ -1183,14 +1193,14 @@ function atualizarCacheMestre(idPlanilha, updates) {
   }
 }
 
-// Lê toda a Cache_Alunos e devolve mapa idPlanilha → { ultimaDataRegistro, ultimaSemanaRegistro, ultimoEncontro }
+// Lê toda a Cache_Alunos e devolve mapa idPlanilha → { ultimaDataRegistro, ultimaSemanaRegistro, ultimoEncontro, ultimaExportacao }
 function lerCacheTodos() {
   const ssMestre = SpreadsheetApp.getActiveSpreadsheet();
   const abaCache = ssMestre.getSheetByName(ABA.CACHE);
   if (!abaCache) return {};
   const lastRow = abaCache.getLastRow();
   if (lastRow < 2) return {};
-  const matriz = abaCache.getRange(2, 1, lastRow - 1, 4).getValues();
+  const matriz = abaCache.getRange(2, 1, lastRow - 1, 5).getValues();
   const mapa = {};
   for (let i = 0; i < matriz.length; i++) {
     const id = String(matriz[i][COL_CACHE.ID_PLANILHA]).trim();
@@ -1198,7 +1208,8 @@ function lerCacheTodos() {
     mapa[id] = {
       ultimaDataRegistro:   txt(matriz[i][COL_CACHE.ULTIMA_DATA_REGISTRO]),
       ultimaSemanaRegistro: txt(matriz[i][COL_CACHE.ULTIMA_SEMANA_REGISTRO]),
-      ultimoEncontro:       txt(matriz[i][COL_CACHE.ULTIMO_ENCONTRO])
+      ultimoEncontro:       txt(matriz[i][COL_CACHE.ULTIMO_ENCONTRO]),
+      ultimaExportacao:     txt(matriz[i][COL_CACHE.ULTIMA_EXPORTACAO])
     };
   }
   return mapa;
