@@ -10,7 +10,8 @@ import { LoadingScreen } from '@/components/Loading';
 import PushToggle from '@/components/PushToggle';
 import StatusAppSelect from '@/components/StatusAppSelect';
 
-// Chave da semana de referência (semana anterior, dom→sab) — mesma lógica do modal
+// Semana de trabalho do mentor (Dom-Sáb que ACABOU de fechar; o mentor
+// entra na segunda pra revisar/exportar). Usado pra display.
 function getSemanaKey() {
   const hoje = new Date();
   const domingo = new Date(hoje);
@@ -21,25 +22,30 @@ function getSemanaKey() {
   return `${fmt(domingo)} a ${fmt(sabado)}`;
 }
 
-const STORAGE_KEY = 'intento_registros_semana';
-
-function carregarRegistrosSemana() {
-  try {
-    const salvo = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
-    const semanaAtual = getSemanaKey();
-    // Limpa registros de semanas anteriores automaticamente
-    if (salvo.semana !== semanaAtual) return {};
-    return salvo.alunos || {};
-  } catch {
-    return {};
-  }
+// ISO 'YYYY-MM-DD' do domingo da semana corrente (início da janela em que
+// uma exportação ainda conta como "feita esta semana").
+function inicioSemanaAtualISO() {
+  const hoje = new Date();
+  const domingo = new Date(hoje);
+  domingo.setDate(hoje.getDate() - hoje.getDay());
+  domingo.setHours(0, 0, 0, 0);
+  return domingo.toISOString().slice(0, 10);
 }
 
-function salvarRegistroSemana(idAluno) {
-  const semanaAtual = getSemanaKey();
-  const atual = carregarRegistrosSemana();
-  const novo = { semana: semanaAtual, alunos: { ...atual, [idAluno]: true } };
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(novo));
+// True se o mentor exportou o .png desse aluno desde o último domingo.
+function exportouNessaSemana(aluno) {
+  const ult = aluno?.ultimaExportacao;
+  if (!ult) return false;
+  return String(ult) >= inicioSemanaAtualISO(); // comparação ISO YYYY-MM-DD = cronológica
+}
+
+// Roteia o botão "Exportar Acompanhamento" baseado no status_app:
+// quem não usa o app (Não se adaptou / Nunca vai usar) vai pra /diario;
+// resto vai pro /painel (template completo).
+function rotaExportacao(aluno) {
+  const semApp = aluno?.statusApp === 'Não se adaptou' || aluno?.statusApp === 'Nunca vai usar';
+  const base = semApp ? '/mentor/ig/diario' : '/mentor/ig/painel';
+  return `${base}?id=${aluno.id}&nome=${encodeURIComponent(aluno.nome || '')}`;
 }
 
 export default function PainelGlobalMentor() {
@@ -48,7 +54,6 @@ export default function PainelGlobalMentor() {
   const ehLider = emailMentor === 'filippe@metodointento.com.br';
 
   const [busca, setBusca] = useState('');
-  const [registradosSemana, setRegistradosSemana] = useState({});
   const [salvandoStatus, setSalvandoStatus] = useState({});
 
   const handleStatusAppChange = useCallback(async (idAluno, novoStatus) => {
@@ -60,11 +65,6 @@ export default function PainelGlobalMentor() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [alunoPreSelecionado, setAlunoPreSelecionado] = useState(null);
 
-  // Carrega estado dos registros da semana do localStorage
-  useEffect(() => {
-    setRegistradosSemana(carregarRegistrosSemana());
-  }, []);
-
   const abrirModal = (aluno = null) => {
     setAlunoPreSelecionado(aluno);
     setIsModalOpen(true);
@@ -75,10 +75,9 @@ export default function PainelGlobalMentor() {
     setAlunoPreSelecionado(null);
   };
 
-  const handleRegistroSalvo = useCallback((idAluno) => {
-    salvarRegistroSemana(String(idAluno));
-    setRegistradosSemana(prev => ({ ...prev, [String(idAluno)]: true }));
-  }, []);
+  // Sem-op — modal ainda chama esse callback ao salvar registro, mas o sinal
+  // de "feito" agora é exportação, não preenchimento. Mantemos pra compat.
+  const handleRegistroSalvo = useCallback(() => {}, []);
 
   const alunosOrdenados = [...alunos].sort((a, b) =>
     (a.nome || '').localeCompare(b.nome || '', 'pt-BR', { sensitivity: 'base' })
@@ -89,7 +88,7 @@ export default function PainelGlobalMentor() {
     a.email?.toLowerCase().includes(busca.toLowerCase())
   );
 
-  const totalRegistrados = alunos.filter(a => registradosSemana[String(a.id)]).length;
+  const totalEnviados = alunos.filter(exportouNessaSemana).length;
   const semanaRef = getSemanaKey();
 
   if (carregando) return <LoadingScreen mensagem="Sincronizando Painel..." />;
@@ -123,58 +122,58 @@ export default function PainelGlobalMentor() {
           </div>
         </div>
 
-        {/* Painel de progresso semanal */}
+        {/* Painel de acompanhamentos enviados (sinal: mentor exportou .png pra mandar pro aluno) */}
         {alunos.length > 0 && (
           <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
               <div>
-                <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">Registros desta semana</p>
-                <p className="text-xs text-slate-400 font-medium">{semanaRef}</p>
+                <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">Acompanhamentos Enviados</p>
+                <p className="text-xs text-slate-400 font-medium">Semana de trabalho · {semanaRef}</p>
               </div>
               <div className="flex items-center gap-4">
                 {/* Barra de progresso */}
                 <div className="flex-1 min-w-[140px]">
                   <div className="flex justify-between text-xs font-semibold mb-1.5">
-                    <span className="text-slate-500">{totalRegistrados} de {alunos.length}</span>
-                    <span className="text-intento-blue">{alunos.length > 0 ? Math.round((totalRegistrados / alunos.length) * 100) : 0}%</span>
+                    <span className="text-slate-500">{totalEnviados} de {alunos.length}</span>
+                    <span className="text-intento-blue">{alunos.length > 0 ? Math.round((totalEnviados / alunos.length) * 100) : 0}%</span>
                   </div>
                   <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
                     <div
-                      className={`h-full rounded-full transition-all duration-700 ${totalRegistrados === alunos.length ? 'bg-emerald-500' : 'bg-intento-yellow'}`}
-                      style={{ width: `${alunos.length > 0 ? (totalRegistrados / alunos.length) * 100 : 0}%` }}
+                      className={`h-full rounded-full transition-all duration-700 ${totalEnviados === alunos.length ? 'bg-emerald-500' : 'bg-intento-yellow'}`}
+                      style={{ width: `${alunos.length > 0 ? (totalEnviados / alunos.length) * 100 : 0}%` }}
                     />
                   </div>
                 </div>
                 {/* Badge de status geral */}
-                {totalRegistrados === alunos.length && alunos.length > 0 ? (
+                {totalEnviados === alunos.length && alunos.length > 0 ? (
                   <span className="shrink-0 bg-emerald-100 text-emerald-700 text-xs font-bold px-3 py-1.5 rounded-full border border-emerald-200">
-                    ✓ Todos registrados
+                    ✓ Todos enviados
                   </span>
                 ) : (
                   <span className="shrink-0 bg-amber-50 text-amber-700 text-xs font-bold px-3 py-1.5 rounded-full border border-amber-200">
-                    {alunos.length - totalRegistrados} pendente{alunos.length - totalRegistrados !== 1 ? 's' : ''}
+                    {alunos.length - totalEnviados} pendente{alunos.length - totalEnviados !== 1 ? 's' : ''}
                   </span>
                 )}
               </div>
             </div>
 
-            {/* Avatares rápidos dos pendentes */}
-            {totalRegistrados < alunos.length && (
+            {/* Avatares rápidos dos pendentes — clica e vai pra exportação */}
+            {totalEnviados < alunos.length && (
               <div className="mt-4 pt-4 border-t border-slate-100">
                 <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">Pendentes:</p>
                 <div className="flex flex-wrap gap-2">
-                  {alunosOrdenados.filter(a => !registradosSemana[String(a.id)]).map(a => (
-                    <button
+                  {alunosOrdenados.filter(a => !exportouNessaSemana(a)).map(a => (
+                    <Link
                       key={a.id}
-                      onClick={() => abrirModal(a)}
-                      title={`Registrar ${a.nome}`}
+                      href={rotaExportacao(a)}
+                      title={`Exportar acompanhamento de ${a.nome}`}
                       className="flex items-center gap-2 bg-slate-50 border border-slate-200 hover:border-intento-yellow hover:bg-amber-50 px-3 py-1.5 rounded-full transition-all group"
                     >
                       <div className="w-5 h-5 rounded-full bg-slate-200 group-hover:bg-intento-yellow flex items-center justify-center shrink-0 transition-colors">
                         <span className="text-[9px] font-black text-slate-600 group-hover:text-white">{a.nome?.charAt(0)}</span>
                       </div>
                       <span className="text-xs font-semibold text-slate-600 group-hover:text-amber-700">{a.nome?.split(' ')[0]}</span>
-                    </button>
+                    </Link>
                   ))}
                 </div>
               </div>
@@ -231,13 +230,13 @@ export default function PainelGlobalMentor() {
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
             {alunosFiltrados.map(aluno => {
-              const jaRegistrado = registradosSemana[String(aluno.id)];
+              const jaEnviou = exportouNessaSemana(aluno);
               return (
                 <div key={aluno.id}
                   onMouseEnter={() => prefetchAluno(aluno.id)}
                   onFocus={() => prefetchAluno(aluno.id)}
                   className={`bg-white rounded-xl border-2 p-5 shadow-sm flex flex-col justify-between transition-all group
-                    ${jaRegistrado
+                    ${jaEnviou
                       ? 'border-emerald-200 hover:border-emerald-300'
                       : 'border-slate-200 hover:border-intento-blue/25 hover:shadow-sm'
                     }`}
@@ -247,16 +246,18 @@ export default function PainelGlobalMentor() {
                       <div className="w-10 h-10 rounded-full bg-intento-blue/10 flex items-center justify-center shrink-0">
                         <span className="text-intento-blue font-black text-sm">{aluno.nome?.charAt(0)?.toUpperCase() || '?'}</span>
                       </div>
-                      {/* Badge de status semanal */}
-                      {jaRegistrado ? (
-                        <span className="text-[10px] font-bold bg-emerald-100 text-emerald-700 px-2.5 py-1 rounded-full border border-emerald-200 flex items-center gap-1 shrink-0">
+                      {/* Badge de acompanhamento da semana (sinal: exportou .png) */}
+                      {jaEnviou ? (
+                        <span title="Acompanhamento exportado nesta semana"
+                          className="text-[10px] font-bold bg-emerald-100 text-emerald-700 px-2.5 py-1 rounded-full border border-emerald-200 flex items-center gap-1 shrink-0">
                           <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M5 13l4 4L19 7" />
                           </svg>
-                          Registrado
+                          Enviado
                         </span>
                       ) : (
-                        <span className="text-[10px] font-bold bg-amber-50 text-amber-600 px-2.5 py-1 rounded-full border border-amber-200 shrink-0">
+                        <span title="Acompanhamento ainda não exportado nesta semana"
+                          className="text-[10px] font-bold bg-amber-50 text-amber-600 px-2.5 py-1 rounded-full border border-amber-200 shrink-0">
                           Pendente
                         </span>
                       )}
@@ -289,22 +290,22 @@ export default function PainelGlobalMentor() {
                     >
                       Abrir Dados
                     </button>
-                    <button
-                      onClick={() => abrirModal(aluno)}
-                      className={`w-full font-bold py-2 rounded-lg transition-all text-xs
-                        ${jaRegistrado
+                    <Link
+                      href={rotaExportacao(aluno)}
+                      className={`w-full font-bold py-2 rounded-lg transition-all text-xs text-center
+                        ${jaEnviou
                           ? 'bg-slate-50 border border-slate-200 text-slate-500 hover:bg-slate-100'
                           : 'bg-white border-2 border-intento-yellow text-intento-yellow hover:bg-intento-yellow hover:text-white'
                         }`}
                     >
-                      {jaRegistrado ? 'Novo Registro (já feito)' : '+ Novo Registro'}
-                    </button>
-                    <Link
-                      href={`/mentor/ig/painel?id=${aluno.id}&nome=${encodeURIComponent(aluno.nome)}`}
+                      {jaEnviou ? 'Exportar de novo' : 'Exportar Acompanhamento →'}
+                    </Link>
+                    <button
+                      onClick={() => abrirModal(aluno)}
                       className="w-full text-center text-xs text-slate-400 hover:text-intento-blue font-semibold py-1.5 transition"
                     >
-                      Exportar Acompanhamento →
-                    </Link>
+                      + Novo Registro Manual
+                    </button>
                   </div>
                 </div>
               );

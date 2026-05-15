@@ -340,6 +340,34 @@ function _mesPorExtenso(isoDate) {
   return _MESES_PT[mm - 1] || '';
 }
 
+// Soma slots da Semana Padrão do aluno cuja categoria conta como hora de
+// estudo (Codificação + Revisão + Simulado). Cada slot = 1 hora.
+// Categoria é extraída do formato '[Categoria] descrição' em cada célula.
+// Retorna 0 se a aba não existe ou der erro (não-bloqueante).
+var _CATEGORIAS_META_HORAS = ['Codificação', 'Revisão', 'Simulado'];
+
+function _calcularMetaHorasDaSemanaPadrao(idPlanilha) {
+  try {
+    var aba = SpreadsheetApp.openById(idPlanilha).getSheetByName(ABA.SEMANA);
+    if (!aba) return 0;
+    var matriz = aba.getRange(2, 2, 16, 7).getValues(); // 16 horários × 7 dias
+    var horas = 0;
+    for (var l = 0; l < matriz.length; l++) {
+      for (var c = 0; c < matriz[l].length; c++) {
+        var celula = String(matriz[l][c] || '').trim();
+        if (!celula) continue;
+        var m = celula.match(/\[(.*?)\]/);
+        var categoria = m ? m[1].trim() : '';
+        if (_CATEGORIAS_META_HORAS.indexOf(categoria) !== -1) horas++;
+      }
+    }
+    return horas;
+  } catch (e) {
+    Logger.log('_calcularMetaHorasDaSemanaPadrao falhou pra ' + idPlanilha + ': ' + e.message);
+    return 0;
+  }
+}
+
 // Garante que a aba BD_Registro tem a coluna origem_registro (col 21).
 // Defensivo: chamado antes de toda escrita, então o código não depende
 // da migração one-shot ter rodado nem da ordem de deploy.
@@ -429,12 +457,15 @@ function cronGerarRegistrosApp(dryRun) {
       }
       if (jaTem) { jaExistiam++; return; }
 
+      // META = soma dos slots Cod+Rev+Sim da Semana Padrão (sugerida; mentor
+      // pode ajustar editando o registro). 0 se aba não existe.
+      var metaHoras = _calcularMetaHorasDaSemanaPadrao(aluno.idPlanilha);
       var novaLinha = [
         semanaStr, mesExt, dataRegistro,
-        '',                           // META — manual (Diário de Bordo)
+        metaHoras || '',              // META — calculada da Semana Padrão
         num(r.horas),
         num(r.dom_TOTAL), num(r.prog_TOTAL),
-        '',                           // REVISOES — manual (Diário de Bordo)
+        '',                           // REVISOES — manual (mentor preenche no /mentor/[id])
         num(r.estresse), num(r.ansiedade), num(r.motivacao), num(r.sono),
         num(r.dom_BIO), num(r.prog_BIO),
         num(r.dom_QUI), num(r.prog_QUI),
@@ -526,6 +557,21 @@ function migrarColunaOrigemRegistro() {
              ' já tinham · ' + semAba + ' sem aba · ' + erros + ' erros');
 }
 
+// Adiciona a coluna `ultima_exportacao` (COL_CACHE.ULTIMA_EXPORTACAO) na
+// aba Cache_Alunos. Defensivo: o `atualizarCacheMestre` já cria a coluna
+// implicitamente ao escrever; essa migração só popula o header.
+function migrarColunaUltimaExportacao() {
+  Logger.log('===== migrarColunaUltimaExportacao =====');
+  var abaCache = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(ABA.CACHE);
+  if (!abaCache) { Logger.log('aba ' + ABA.CACHE + ' não encontrada'); return; }
+  if (txt(abaCache.getRange(1, COL_CACHE.ULTIMA_EXPORTACAO + 1).getValue())) {
+    Logger.log('coluna ultima_exportacao já existe');
+    return;
+  }
+  abaCache.getRange(1, COL_CACHE.ULTIMA_EXPORTACAO + 1).setValue('ultima_exportacao');
+  Logger.log('coluna ultima_exportacao criada (col ' + (COL_CACHE.ULTIMA_EXPORTACAO + 1) + ')');
+}
+
 // Adiciona a coluna `status_app` (COL_MESTRE.STATUS_APP) na aba MESTRE.
 function migrarColunaStatusApp() {
   Logger.log('===== migrarColunaStatusApp =====');
@@ -567,6 +613,30 @@ function handleSalvarStatusApp(dados) {
     return responderJSON({ status: 'erro', mensagem: 'aluno não encontrado na MESTRE' });
   } catch (e) {
     Logger.log('handleSalvarStatusApp EXCEPTION: ' + e.message);
+    return responderJSON({ status: 'erro', mensagem: e.message });
+  }
+}
+
+
+// =====================================================================
+// HANDLER — registra que o mentor exportou o .png de acompanhamento
+// =====================================================================
+// dados: { email, idAluno }
+// Atualiza Cache_Alunos.ULTIMA_EXPORTACAO com a data ISO de hoje.
+// É o sinal de "mentor fez o trabalho da semana" (baixou o PNG pra mandar
+// pro aluno via áudio). Chamado por /mentor/ig/painel e /mentor/ig/diario
+// quando o download é concluído com sucesso.
+function handleRegistrarExportacao(dados) {
+  try {
+    var idPlanilha = txt(dados.idAluno);
+    if (!idPlanilha) return responderJSON({ status: 'erro', mensagem: 'idAluno obrigatório' });
+    _exigirAcessoAluno(dados.email, idPlanilha);
+
+    var hojeISO = Utilities.formatDate(new Date(), 'GMT-3', 'yyyy-MM-dd');
+    atualizarCacheMestre(idPlanilha, { ULTIMA_EXPORTACAO: hojeISO });
+    return responderJSON({ status: 'sucesso', ultimaExportacao: hojeISO });
+  } catch (e) {
+    Logger.log('handleRegistrarExportacao EXCEPTION: ' + e.message);
     return responderJSON({ status: 'erro', mensagem: e.message });
   }
 }
