@@ -127,20 +127,29 @@ function _bqQuery(sql, parameters) {
 // =====================================================================
 // _lerRegistrosApp — 1 linha por aluno com os 18 campos do registro
 // =====================================================================
-// semanaAlvo: 'YYYY-MM-DD' (sábado da semana — fim da semana Dom-Sáb).
-// emailsAlvo: array de emails pra filtrar; vazio/ausente = todos os alunos.
+// semanaInicio: 'YYYY-MM-DD' do domingo (início) — casa com atividadesSemanais.
+// semanaFim:    'YYYY-MM-DD' do sábado  (fim)    — limite da foto de domínio.
+// emailsAlvo:   array de emails pra filtrar; vazio/ausente = todos os alunos.
 // Retorna: { email: { dom_BIO, ..., prog_TOTAL, horas, estresse, ... } }.
-function _lerRegistrosApp(semanaAlvo, emailsAlvo) {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(semanaAlvo))) {
-    throw new Error('semanaAlvo inválida (esperado YYYY-MM-DD): ' + semanaAlvo);
+function _lerRegistrosApp(semanaInicio, semanaFim, emailsAlvo) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(semanaInicio))) {
+    throw new Error('semanaInicio inválida (esperado YYYY-MM-DD): ' + semanaInicio);
+  }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(semanaFim))) {
+    throw new Error('semanaFim inválida (esperado YYYY-MM-DD): ' + semanaFim);
   }
   var alvos = Array.isArray(emailsAlvo) ? emailsAlvo : [];
 
   var parameters = [
     {
-      name: 'semana_alvo',
+      name: 'semana_inicio',
       parameterType: { type: 'DATE' },
-      parameterValue: { value: semanaAlvo },
+      parameterValue: { value: semanaInicio },
+    },
+    {
+      name: 'semana_fim',
+      parameterType: { type: 'DATE' },
+      parameterValue: { value: semanaFim },
     },
     {
       name: 'alvos',
@@ -165,7 +174,8 @@ function smokeIntegracaoApp() {
   var token = _bqGetAccessToken();
   Logger.log('✓ access token obtido (' + token.length + ' chars)');
 
-  var registros = _lerRegistrosApp('2026-05-17', [
+  // semana 17/05 a 23/05/2026 (domingo 17 = início; sábado 23 = fim)
+  var registros = _lerRegistrosApp('2026-05-17', '2026-05-23', [
     'gabriel.limamoreira@gmail.com',
     'silvaclaudialuisa@gmail.com',
   ]);
@@ -191,7 +201,10 @@ function smokeIntegracaoApp() {
 // =====================================================================
 // SQL — query master. Replica a lógica do app Flutter.
 // Mantida em sincronia com gas/sql/registro_semanal_app.sql.
-// Parâmetros: @semana_alvo (DATE), @alvos (ARRAY<STRING>, vazio = todos).
+// Parâmetros:
+//   @semana_inicio (DATE) — domingo; casa com atividadesSemanais.dataExecucao
+//   @semana_fim    (DATE) — sábado; limite da foto de domínio/progresso
+//   @alvos (ARRAY<STRING>, vazio = todos)
 // =====================================================================
 var _SQL_REGISTRO_APP = [
   'WITH',
@@ -212,7 +225,7 @@ var _SQL_REGISTRO_APP = [
   '  FROM `intento-edu.app.topicoPrep`',
   '  WHERE usuarioId IN (SELECT uid FROM alunos) AND paiId IS NOT NULL',
   '),',
-  // última atividade por (aluno, nó) até semana_alvo + contagem de finished
+  // última atividade por (aluno, nó) até semana_fim + contagem de finished
   'ativ AS (',
   '  SELECT',
   '    REGEXP_EXTRACT(__key__.path, r\'"u",\\s*"([^"]+)"\') AS usuarioId,',
@@ -221,7 +234,7 @@ var _SQL_REGISTRO_APP = [
   '    COUNTIF(finished) AS n_finished',
   '  FROM `intento-edu.app.atividade`',
   '  WHERE REGEXP_EXTRACT(__key__.path, r\'"u",\\s*"([^"]+)"\') IN (SELECT uid FROM alunos)',
-  '    AND DATE(TIMESTAMP_SECONDS(date)) <= @semana_alvo',
+  '    AND DATE(TIMESTAMP_SECONDS(date)) <= @semana_fim',
   '  GROUP BY usuarioId, topicoId',
   '),',
   // folhas: total=1, finished=n_finished, right/wrong da última atividade
@@ -270,7 +283,7 @@ var _SQL_REGISTRO_APP = [
   '    ROUND(AVG(estresse), 2) AS estresse, ROUND(AVG(ansiedade), 2) AS ansiedade,',
   '    ROUND(AVG(motivacao), 2) AS motivacao, ROUND(AVG(descanso), 2) AS sono',
   '  FROM `intento-edu.analise.atividadesSemanais`',
-  '  WHERE dataExecucao = @semana_alvo GROUP BY usuarioId',
+  '  WHERE dataExecucao = @semana_inicio GROUP BY usuarioId',
   ')',
   'SELECT',
   '  a.email,',
@@ -307,13 +320,19 @@ var _SQL_REGISTRO_APP = [
 var _MESES_PT = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
                  'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
 
-// "DD/MM/YYYY a DD/MM/YYYY" → "YYYY-MM-DD" do sábado (fim da semana)
-function _semanaStrParaSabadoISO(semanaStr) {
+// "DD/MM/YYYY a DD/MM/YYYY" → { inicio, fim } em ISO "YYYY-MM-DD".
+// inicio = domingo (início da semana) — bate com atividadesSemanais.dataExecucao.
+// fim    = sábado (fim da semana)     — limite da "foto" de domínio/progresso.
+function _semanaStrParaISOs(semanaStr) {
   var partes = String(semanaStr).split(' a ');
   if (partes.length !== 2) throw new Error('semanaStr inválida: ' + semanaStr);
-  var sab = partes[1].trim().split('/'); // [DD, MM, YYYY]
-  if (sab.length !== 3) throw new Error('data inválida em semanaStr: ' + semanaStr);
-  return sab[2] + '-' + sab[1] + '-' + sab[0];
+  var dom = partes[0].trim().split('/'); // [DD, MM, YYYY]
+  var sab = partes[1].trim().split('/');
+  if (dom.length !== 3 || sab.length !== 3) throw new Error('data inválida em semanaStr: ' + semanaStr);
+  return {
+    inicio: dom[2] + '-' + dom[1] + '-' + dom[0],
+    fim:    sab[2] + '-' + sab[1] + '-' + sab[0],
+  };
 }
 
 function _mesPorExtenso(isoDate) {
@@ -348,10 +367,10 @@ function cronGerarRegistrosApp(dryRun) {
   Logger.log('===== cronGerarRegistrosApp ' + (dryRun ? '(DRY RUN)' : '') + ' =====');
 
   var semanaStr = computarSemanaAnterior_();
-  var sabadoISO = _semanaStrParaSabadoISO(semanaStr);
-  var mesExt = _mesPorExtenso(sabadoISO);
+  var semana = _semanaStrParaISOs(semanaStr); // { inicio (domingo), fim (sábado) }
+  var mesExt = _mesPorExtenso(semana.fim);
   var dataRegistro = Utilities.formatDate(new Date(), 'GMT-3', 'dd/MM/yyyy');
-  Logger.log('semana=' + semanaStr + ' · sabadoISO=' + sabadoISO);
+  Logger.log('semana=' + semanaStr + ' · inicio=' + semana.inicio + ' · fim=' + semana.fim);
 
   var ssMestre = SpreadsheetApp.getActiveSpreadsheet();
   var abaMestre = ssMestre.getSheetByName(ABA.MESTRE);
@@ -376,7 +395,7 @@ function cronGerarRegistrosApp(dryRun) {
   // 1 query pra todos os elegíveis
   var registros;
   try {
-    registros = _lerRegistrosApp(sabadoISO, ativos.map(function (a) { return a.email; }));
+    registros = _lerRegistrosApp(semana.inicio, semana.fim, ativos.map(function (a) { return a.email; }));
   } catch (e) {
     Logger.log('FALHA _lerRegistrosApp: ' + e.message);
     registrarErro(e, 'cronGerarRegistrosApp/_lerRegistrosApp semana=' + semanaStr);

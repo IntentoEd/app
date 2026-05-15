@@ -1,7 +1,7 @@
 -- ============================================================
 -- REGISTRO SEMANAL — query master. Replica a lógica do app Flutter
 -- (intento-fe: subject_performance.dart, topic_metrics.dart, performance.dart).
--- 1 linha por (aluno, semana). Domínio/Progresso = "foto" até semana_alvo.
+-- 1 linha por (aluno, semana). Domínio/Progresso = "foto" até semana_fim.
 --
 -- LÓGICA (validada contra o app, mai/2026):
 -- · DOMÍNIO por matéria  = SUM(rightAnswers) / SUM(right+wrong) dos tópicos
@@ -15,12 +15,15 @@
 --   das contagens de finished dos subtópicos (soma, NÃO distinct).
 -- · PROGRESSO total      = MÉDIA SIMPLES do progresso das disciplinas ativas.
 -- · Disciplinas ativas   = objetivo.subjectIds (exclui as que o aluno removeu).
--- · HORAS / CHECK-IN     = analise.atividadesSemanais da semana_alvo.
+-- · HORAS / CHECK-IN     = analise.atividadesSemanais (dataExecucao = semana_inicio).
 --
 -- Diferença conhecida: Domínio pode divergir 1-2pp do app (detalhe de quais
 -- atividades entram). Progresso bate exato.
 -- ============================================================
-DECLARE semana_alvo DATE DEFAULT DATE("2026-05-17");
+-- Semana Dom-Sáb: inicio = domingo (casa com atividadesSemanais.dataExecucao),
+-- fim = sábado (limite da foto de domínio/progresso).
+DECLARE semana_inicio DATE DEFAULT DATE("2026-05-17");
+DECLARE semana_fim    DATE DEFAULT DATE("2026-05-23");
 -- Para rodar pra todos os alunos, troque o filtro em `alunos` por toda a tabela usuario.
 DECLARE alvos ARRAY<STRING> DEFAULT ["gabriel.limamoreira@gmail.com","silvaclaudialuisa@gmail.com"];
 
@@ -41,7 +44,7 @@ nodes AS (
   WHERE usuarioId IN (SELECT uid FROM alunos) AND paiId IS NOT NULL
 ),
 
--- última atividade por (aluno, nó) até semana_alvo + contagem de finished
+-- última atividade por (aluno, nó) até semana_fim + contagem de finished
 ativ AS (
   SELECT
     REGEXP_EXTRACT(__key__.path, r'"u",\s*"([^"]+)"') AS usuarioId,
@@ -50,7 +53,7 @@ ativ AS (
     COUNTIF(finished) AS n_finished
   FROM `intento-edu.app.atividade`
   WHERE REGEXP_EXTRACT(__key__.path, r'"u",\s*"([^"]+)"') IN (SELECT uid FROM alunos)
-    AND DATE(TIMESTAMP_SECONDS(date)) <= semana_alvo
+    AND DATE(TIMESTAMP_SECONDS(date)) <= semana_fim
   GROUP BY usuarioId, topicoId
 ),
 
@@ -107,7 +110,7 @@ semana AS (
     ROUND(AVG(estresse), 2) AS estresse, ROUND(AVG(ansiedade), 2) AS ansiedade,
     ROUND(AVG(motivacao), 2) AS motivacao, ROUND(AVG(descanso), 2) AS sono
   FROM `intento-edu.analise.atividadesSemanais`
-  WHERE dataExecucao = semana_alvo GROUP BY usuarioId
+  WHERE dataExecucao = semana_inicio GROUP BY usuarioId
 )
 
 SELECT
