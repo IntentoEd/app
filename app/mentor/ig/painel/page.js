@@ -85,7 +85,7 @@ function ExportarAcompanhamento() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const cardRef = useRef(null);
-  const { alunos } = useMentor();
+  const { alunos, marcarAcompanhamentoExportado } = useMentor();
 
   const [alunoId, setAlunoId] = useState(searchParams.get('id') || '');
   const [nomeAluno, setNomeAluno] = useState(decodeURIComponent(searchParams.get('nome') || ''));
@@ -151,6 +151,7 @@ function ExportarAcompanhamento() {
       // Registra que o mentor exportou — sinal de "acompanhamento enviado"
       // (não-bloqueante: erro aqui não atrapalha o download).
       if (alunoId) {
+        marcarAcompanhamentoExportado(alunoId); // otimista: badge atualiza no /mentor sem F5
         apiFetch('/api/mentor', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },

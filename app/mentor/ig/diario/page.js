@@ -39,7 +39,7 @@ function ExportarDiario() {
   const nomeFromQuery = searchParams.get('nome') || '';
 
   const cardRef = useRef(null);
-  const { emailMentor } = useMentor();
+  const { emailMentor, marcarAcompanhamentoExportado } = useMentor();
   const [encontro, setEncontro] = useState(null);
   const [nomeAluno, setNomeAluno] = useState(nomeFromQuery);
   const [carregando, setCarregando] = useState(true);
@@ -88,6 +88,7 @@ function ExportarDiario() {
       // Registra que o mentor exportou — sinal de "acompanhamento enviado"
       // (não-bloqueante: erro aqui não atrapalha o download).
       if (idPlanilha) {
+        marcarAcompanhamentoExportado(idPlanilha); // otimista: badge atualiza no /mentor sem F5
         apiFetch('/api/mentor', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
