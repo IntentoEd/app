@@ -103,10 +103,19 @@ disc_metrica AS (
   GROUP BY m.usuarioId, m.disciplinaId, tp.nome
 ),
 
--- horas + check-in da semana
-semana AS (
+-- HORAS direto do raw (app.atividade.duration). A tabela tratada
+-- analise.atividadesSemanais.minutos divergia da realidade do app.
+semana_horas AS (
+  SELECT
+    REGEXP_EXTRACT(__key__.path, r'"u",\s*"([^"]+)"') AS usuarioId,
+    ROUND(SUM(duration) / 3600.0, 1) AS horas
+  FROM `intento-edu.app.atividade`
+  WHERE DATE(TIMESTAMP_SECONDS(date)) BETWEEN semana_inicio AND semana_fim
+  GROUP BY usuarioId
+),
+-- CHECK-IN ainda de analise.atividadesSemanais (em validação)
+semana_checkin AS (
   SELECT usuarioId,
-    ROUND(SUM(minutos)/60.0, 1) AS horas,
     ROUND(AVG(estresse), 2) AS estresse, ROUND(AVG(ansiedade), 2) AS ansiedade,
     ROUND(AVG(motivacao), 2) AS motivacao, ROUND(AVG(descanso), 2) AS sono
   FROM `intento-edu.analise.atividadesSemanais`
@@ -157,11 +166,13 @@ SELECT
   ROUND(MAX(IF(dm.Disciplina='Física',     dm.progresso, NULL)), 2) AS prog_FIS,
   ROUND(MAX(IF(dm.Disciplina='Matemática', dm.progresso, NULL)), 2) AS prog_MAT,
   ROUND(AVG(dm.progresso), 2) AS prog_TOTAL,
-  s.horas, s.estresse, s.ansiedade, s.motivacao, s.sono,
+  COALESCE(sh.horas, 0) AS horas,
+  sc.estresse, sc.ansiedade, sc.motivacao, sc.sono,
   COALESCE(ra.revisoes_atrasadas, 0) AS revisoes_atrasadas
 FROM alunos a
 LEFT JOIN disc_metrica dm ON dm.usuarioId = a.uid
-LEFT JOIN semana s ON s.usuarioId = a.uid
+LEFT JOIN semana_horas sh ON sh.usuarioId = a.uid
+LEFT JOIN semana_checkin sc ON sc.usuarioId = a.uid
 LEFT JOIN rev_atrasadas ra ON ra.usuarioId = a.uid
-GROUP BY a.email, s.horas, s.estresse, s.ansiedade, s.motivacao, s.sono, ra.revisoes_atrasadas
+GROUP BY a.email, sh.horas, sc.estresse, sc.ansiedade, sc.motivacao, sc.sono, ra.revisoes_atrasadas
 ORDER BY a.email
