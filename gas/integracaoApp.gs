@@ -276,10 +276,23 @@ var _SQL_REGISTRO_APP = [
   '  JOIN `intento-edu.app.topicoPrep` tp ON tp.topicoId = m.disciplinaId AND tp.usuarioId = m.usuarioId',
   '  GROUP BY m.usuarioId, m.disciplinaId, tp.nome',
   '),',
-  // horas + check-in da semana
-  'semana AS (',
+  // HORAS — direto do raw (app.atividade.duration em segundos). A tabela
+  // tratada analise.atividadesSemanais.minutos diverge da realidade do app
+  // (em alguns alunos infla, em outros falta), confirmado em mai/2026
+  // contra valores que mentores observaram no app. SUM(duration)/3600 bate
+  // exato com o que o aluno vê.
+  'semana_horas AS (',
+  '  SELECT',
+  '    REGEXP_EXTRACT(__key__.path, r\'"u",\\s*"([^"]+)"\') AS usuarioId,',
+  '    ROUND(SUM(duration) / 3600.0, 1) AS horas',
+  '  FROM `intento-edu.app.atividade`',
+  '  WHERE DATE(TIMESTAMP_SECONDS(date)) BETWEEN @semana_inicio AND @semana_fim',
+  '  GROUP BY usuarioId',
+  '),',
+  // CHECK-IN — ainda de analise.atividadesSemanais (em validação;
+  // se também divergir, migra pra app.checkin numa próxima rodada).
+  'semana_checkin AS (',
   '  SELECT usuarioId,',
-  '    ROUND(SUM(minutos)/60.0, 1) AS horas,',
   '    ROUND(AVG(estresse), 2) AS estresse, ROUND(AVG(ansiedade), 2) AS ansiedade,',
   '    ROUND(AVG(motivacao), 2) AS motivacao, ROUND(AVG(descanso), 2) AS sono',
   '  FROM `intento-edu.analise.atividadesSemanais`',
@@ -326,13 +339,15 @@ var _SQL_REGISTRO_APP = [
   '  ROUND(MAX(IF(dm.Disciplina=\'Física\',     dm.progresso, NULL)), 2) AS prog_FIS,',
   '  ROUND(MAX(IF(dm.Disciplina=\'Matemática\', dm.progresso, NULL)), 2) AS prog_MAT,',
   '  ROUND(AVG(dm.progresso), 2) AS prog_TOTAL,',
-  '  s.horas, s.estresse, s.ansiedade, s.motivacao, s.sono,',
+  '  COALESCE(sh.horas, 0) AS horas,',
+  '  sc.estresse, sc.ansiedade, sc.motivacao, sc.sono,',
   '  COALESCE(ra.revisoes_atrasadas, 0) AS revisoes_atrasadas',
   'FROM alunos a',
   'LEFT JOIN disc_metrica dm ON dm.usuarioId = a.uid',
-  'LEFT JOIN semana s ON s.usuarioId = a.uid',
+  'LEFT JOIN semana_horas sh ON sh.usuarioId = a.uid',
+  'LEFT JOIN semana_checkin sc ON sc.usuarioId = a.uid',
   'LEFT JOIN rev_atrasadas ra ON ra.usuarioId = a.uid',
-  'GROUP BY a.email, s.horas, s.estresse, s.ansiedade, s.motivacao, s.sono, ra.revisoes_atrasadas',
+  'GROUP BY a.email, sh.horas, sc.estresse, sc.ansiedade, sc.motivacao, sc.sono, ra.revisoes_atrasadas',
   'ORDER BY a.email',
 ].join('\n');
 
@@ -675,6 +690,52 @@ function handleRegistrarExportacao(dados) {
     Logger.log('handleRegistrarExportacao EXCEPTION: ' + e.message);
     return responderJSON({ status: 'erro', mensagem: e.message });
   }
+}
+
+
+// =====================================================================
+// ONE-SHOT — apaga linhas com origem='auto' de uma semana específica
+// =====================================================================
+// Pra usar quando o cron gravou dados errados e precisa re-rodar.
+// NÃO toca linhas manual/revisado/legado (origem != 'auto') —
+// o trabalho do mentor é preservado.
+//
+// Uso: editar a constante SEMANA_ALVO abaixo e rodar no editor.
+// Depois rodar cronGerarRegistrosApp() pra preencher de novo.
+function apagarLinhasAutoDaSemana() {
+  var SEMANA_ALVO = '10/05/2026 a 16/05/2026'; // edite aqui
+  Logger.log('===== apagarLinhasAutoDaSemana ' + SEMANA_ALVO + ' =====');
+
+  var matriz = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(ABA.MESTRE).getDataRange().getValues();
+  var alvoTs = _semanaInicioTs(SEMANA_ALVO);
+  var apagadas = 0, planilhasOK = 0, semLinha = 0, erros = 0;
+
+  for (var i = 1; i < matriz.length; i++) {
+    var idPlanilha = txt(matriz[i][COL_MESTRE.ID_PLANILHA]);
+    if (!idPlanilha) continue;
+    if (matriz[i][COL_MESTRE.DT_SAIDA]) continue;
+
+    try {
+      var abaDB = SpreadsheetApp.openById(idPlanilha).getSheetByName(ABA.REGISTROS);
+      if (!abaDB) continue;
+      var dados = abaDB.getDataRange().getValues();
+      var achou = false;
+      for (var j = dados.length - 1; j >= 1; j--) {
+        if (_semanaInicioTs(dados[j][COL_REG.SEMANA]) === alvoTs
+            && txt(dados[j][COL_REG.ORIGEM]) === ORIGEM_REG.AUTO) {
+          abaDB.deleteRow(j + 1);
+          apagadas++;
+          achou = true;
+        }
+      }
+      if (achou) planilhasOK++; else semLinha++;
+    } catch (e) {
+      erros++;
+      Logger.log('  erro id=' + idPlanilha + ': ' + e.message);
+    }
+  }
+  Logger.log('apagarLinhasAutoDaSemana: ' + apagadas + ' linhas em ' + planilhasOK +
+             ' planilhas · ' + semLinha + ' sem linha auto · ' + erros + ' erros');
 }
 
 
