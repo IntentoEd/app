@@ -20,6 +20,19 @@ const COL_ORIGEM = 20;
 // Colunas que chegam como decimal (0–1) e devem ser exibidas como %
 const COLUNAS_PERCENT = new Set([5, 6, 12, 13, 14, 15, 16, 17, 18, 19]);
 
+// Colunas de check-in (estresse, ansiedade, motivação, sono). Escala depende
+// da origem: auto/revisado = 0-1 (cron grava decimal do app); manual/legado =
+// 0-5 (Likert preenchida pelo aluno). Helper toPercentCheckin normaliza pra %.
+const COLUNAS_CHECKIN = new Set([8, 9, 10, 11]);
+
+function toPercentCheckin(val, origem) {
+  const n = parseFloat(String(val ?? '').replace(',', '.'));
+  if (isNaN(n)) return null;
+  const usaEscala01 = origem === 'auto' || origem === 'revisado';
+  const max = usaEscala01 ? 1 : 5;
+  return Math.round((n / max) * 100);
+}
+
 // Selo de origem do registro. 'auto' = veio do app, mentor ainda não conferiu;
 // 'revisado' = veio do app e o mentor editou. 'manual'/legado não tem selo.
 function seloOrigem(origem) {
@@ -57,7 +70,7 @@ const VISOES = [
 
 const COL_LABELS = [
   'Semana','Mês','Data','Meta','Horas','Domínio (%)','Progresso (%)','Revisões Atras.',
-  'Estresse','Ansiedade','Motivação','Sono',
+  'Estresse (%)','Ansiedade (%)','Motivação (%)','Sono (%)',
   'D. BIO','P. BIO','D. QUI','P. QUI','D. FIS','P. FIS','D. MAT','P. MAT',
 ];
 
@@ -447,7 +460,9 @@ function HistoricoAnalitico({ registros, cardClass, idPlanilha, onUpdate }) {
                           <span>{reg[ci] ?? '—'}</span>
                           {seloOrigem(reg[COL_ORIGEM])}
                         </div>
-                      ) : COLUNAS_PERCENT.has(ci)
+                      ) : COLUNAS_CHECKIN.has(ci)
+                        ? (toPercentCheckin(reg[ci], reg[COL_ORIGEM]) !== null ? `${toPercentCheckin(reg[ci], reg[COL_ORIGEM])}%` : '—')
+                        : COLUNAS_PERCENT.has(ci)
                         ? (toPercent(reg[ci]) !== null ? `${toPercent(reg[ci])}%` : '—')
                         : (reg[ci] ?? '—')}
                     </td>
